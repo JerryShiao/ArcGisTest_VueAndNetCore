@@ -4,7 +4,9 @@
     "http": {
       "commandName": "Project",
       "dotnetRunMessages": true,
-      "launchBrowser": false,
+      "launchBrowser": false, // 啟動時自動開啟瀏覽器
+      "launchUrl": "http://localhost:5173",
+      "browserName": "chrome",
       "applicationUrl": "http://localhost:5126",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
@@ -15,6 +17,8 @@
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": false,
+      "launchUrl": "https://localhost:5173",
+      "browserName": "chrome",
       "applicationUrl": "https://localhost:7169;http://localhost:5126",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
