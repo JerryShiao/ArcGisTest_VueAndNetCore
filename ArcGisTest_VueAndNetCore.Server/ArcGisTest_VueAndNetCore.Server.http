@@ -1,0 +1,6 @@
+@ArcGisTest_VueAndNetCore.Server_HostAddress = http://localhost:5126
+
+GET {{ArcGisTest_VueAndNetCore.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

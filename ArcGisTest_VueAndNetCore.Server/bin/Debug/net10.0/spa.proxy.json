@@ -1,0 +1,10 @@
+{
+"SpaProxyServer": {
+"ServerUrl": "https://localhost:56440",
+"RedirectUrl": "",
+"LaunchCommand": "npm run dev",
+"WorkingDirectory": "C:\\Jerry\\ArcGisTest_VueAndNetCore\\ArcGisTest_VueAndNetCore.Server\\..\\arcgistest_vueandnetcore.client",
+"MaxTimeoutInSeconds": "120",
+"KeepRunning": "false"
+}
+}

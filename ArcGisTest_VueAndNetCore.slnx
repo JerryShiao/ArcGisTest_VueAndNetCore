@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="arcgistest_vueandnetcore.client/arcgistest_vueandnetcore.client.esproj">
+    <Build />
+    <Deploy />
+  </Project>
+  <Project Path="ArcGisTest_VueAndNetCore.Server/ArcGisTest_VueAndNetCore.Server.csproj" />
+</Solution>
