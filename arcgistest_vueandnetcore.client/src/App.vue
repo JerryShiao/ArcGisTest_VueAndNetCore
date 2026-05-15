@@ -347,31 +347,46 @@
 
         let fs2WmsLayer: any = null;
 
-        fs2WmsCheckbox.addEventListener("click", async () => {
-          const visible = fs2WmsCheckbox.checked;
-
-          try {
-            if (visible) {
-              // 呼叫後端 API 取得 WMS 圖層資訊並建立圖層
+        // 帶重試的預先載入：最多重試 3 次，每次失敗延遲 3 秒後再試
+        const preloadFs2WmsLayer = async (maxRetries = 3, delayMs = 3000) => {
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
               const layerInfo = await getFs2WmsLayer();
-              console.log("2015年全臺福衛二號影像 (WMS) 顯示圖層", layerInfo);
-
+              console.log("2015年全臺福衛二號影像 (WMS) 預先載入成功", layerInfo);
               fs2WmsLayer = new WMSLayer({
                 url: layerInfo.url,
-                sublayers: [{ name: layerInfo.layerName, visible: true }]
+                sublayers: [{ name: layerInfo.layerName, visible: true }],
+                visible: false
               });
+              // 先明確等待 GetCapabilities 載入完成，確保 load 失敗時能被 catch 捕捉並重試
+              await fs2WmsLayer.load();
               map.add(fs2WmsLayer);
-            }
-            else {
-              // 移除 WMS 圖層（取消勾選時）
+              return; // 成功即結束
+            } catch (err) {
+              // 確保損壞的 layer 物件不會殘留，讓下次重試重新建立
               if (fs2WmsLayer) {
-                map.remove(fs2WmsLayer);
+                try { map.remove(fs2WmsLayer); } catch (_) {}
                 fs2WmsLayer = null;
+              }
+              console.warn(`WMS 圖層預先載入失敗（第 ${attempt}/${maxRetries} 次）：`, err);
+              if (attempt < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+              } else {
+                console.error("WMS 圖層預先載入已達重試上限，放棄。");
               }
             }
           }
-          catch (err) {
-            console.error("呼叫後端 API 失敗：", err);
+        };
+        preloadFs2WmsLayer();
+
+        fs2WmsCheckbox.addEventListener("click", () => {
+          const visible = fs2WmsCheckbox.checked;
+
+          if (fs2WmsLayer) {
+            fs2WmsLayer.visible = visible;
+          } else {
+            console.warn("WMS 圖層尚未載入完成，請稍後再試");
+            fs2WmsCheckbox.checked = false;
           }
         });
 
@@ -398,6 +413,9 @@
             proxyUrl: "/wmslayer/fs2/arcgisproxy"
           }
         ];
+
+        // 延長 SDK 請求逾時至 120 秒（預設約 60 秒），避免 WMS 服務回應慢時拋出 Timeout exceeded
+        esriConfig.request.timeout = 120000;
         //#endregion
 
         //#region ◆底圖切換功能

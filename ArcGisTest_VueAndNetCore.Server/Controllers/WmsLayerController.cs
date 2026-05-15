@@ -1,5 +1,6 @@
 using ArcGisTest_VueAndNetCore.Server.Model.AppSettings;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using System.Net.Http.Headers;
 using System.Text;
@@ -24,15 +25,66 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
         private readonly WmsApiClass _wmsApi;
 
         /// <summary>
+        /// 記憶體快取，用於儲存 WMS 回應
+        /// </summary>
+        private readonly IMemoryCache _cache;
+
+        /// <summary>
+        /// 快取 WMS 回應的資料結構
+        /// </summary>
+        private record WmsCacheEntry(byte[] Data, string ContentType);
+
+        /// <summary>
         /// ◆建構子
         /// </summary>
         /// <param name="httpClientFactory">HTTP客戶端實例</param>
         /// <param name="wmsApiOptions">WMS API 配置選項</param>
-        public WmsLayerController(IHttpClientFactory httpClientFactory, IOptions<WmsApiClass> wmsApiOptions)
+        /// <param name="cache">記憶體快取</param>
+        public WmsLayerController(IHttpClientFactory httpClientFactory, IOptions<WmsApiClass> wmsApiOptions, IMemoryCache cache)
         {
             _httpClientFactory = httpClientFactory;
             _wmsApi = wmsApiOptions.Value;
+            _cache = cache;
         }
+
+        #region ◆私有方法：重試 HTTP 請求
+        /// <summary>
+        /// 對 WMS 服務執行帶重試的 GET 請求，遇到 502/503/504 時自動重試
+        /// </summary>
+        private static async Task<HttpResponseMessage> GetWithRetryAsync(
+            HttpClient client, string url, int maxRetries = 3, int delayMs = 1000)
+        {
+            HttpResponseMessage? response = null;
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            {
+                try
+                {
+                    // ResponseHeadersRead：只等標頭，避免讀取內容時連線中斷拋出例外
+                    response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+                    if (response.IsSuccessStatusCode ||
+                        ((int)response.StatusCode != 502 &&
+                         (int)response.StatusCode != 503 &&
+                         (int)response.StatusCode != 504))
+                    {
+                        return response;
+                    }
+                }
+                catch (HttpRequestException) when (attempt < maxRetries)
+                {
+                    // 連線被切斷或串流複製失敗，視為暫時性錯誤，繼續重試
+                }
+                catch (TaskCanceledException)
+                {
+                    // HttpClient 逾時：直接往外拋，不重試，避免累計等待時間超過前端 SDK timeout
+                    throw;
+                }
+
+                if (attempt < maxRetries)
+                    await Task.Delay(delayMs);
+            }
+            return response!;
+        }
+        #endregion
 
         #region ◆福衛二號影像
         /// <summary>
@@ -88,34 +140,57 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
                 targetUrl = $"{realOrigin}/{path}{queryString}";
             }
 
+            // 先查快取，命中則直接回傳，省去外部網路往返
+            if (_cache.TryGetValue(targetUrl, out WmsCacheEntry? cached) && cached is not null)
+                return File(cached.Data, cached.ContentType);
+
             // 建立 HttpClient 實例並添加基本認證頭
             var client = _httpClientFactory.CreateClient("WmsProxy");
             var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{username}:{password}"));
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
-            // 轉發請求至真實 WMS 服務
-            var response = await client.GetAsync(targetUrl);
+            // 轉發請求至真實 WMS 服務（遇到 502/503/504 或連線中斷自動重試最多 3 次）
+            HttpResponseMessage response;
+            try
+            {
+                response = await GetWithRetryAsync(client, targetUrl);
+            }
+            catch (TaskCanceledException)
+            {
+                return StatusCode(504, "WMS 服務請求遂時，請稍後再試");
+            }
 
             if (!response.IsSuccessStatusCode)
                 return StatusCode((int)response.StatusCode, "WMS 服務回應錯誤");
 
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/gif";
 
-            // 若為 GetCapabilities XML 回應，將真實伺服器來源替換成 proxy URL
-            // 使 ArcGIS SDK 解析後的所有端點都指向 proxy
-            if (contentType.Contains("xml", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                var xml = await response.Content.ReadAsStringAsync();
-                var proxyUrl = $"{Request.Scheme}://{Request.Host}/wmslayer/fs2/proxy";
-                var realUri = new Uri(baseUrl);
-                var realOrigin = $"{realUri.Scheme}://{realUri.Host}";
-                var rewrittenXml = xml.Replace(realOrigin, proxyUrl);
-                return Content(rewrittenXml, contentType);
-            }
+                // 若為 GetCapabilities XML 回應，將真實伺服器來源替換成 proxy URL
+                // 使 ArcGIS SDK 解析後的所有端點都指向 proxy
+                if (contentType.Contains("xml", StringComparison.OrdinalIgnoreCase))
+                {
+                    var xml = await response.Content.ReadAsStringAsync();
+                    var proxyUrl = $"{Request.Scheme}://{Request.Host}/wmslayer/fs2/proxy";
+                    var realUri = new Uri(baseUrl);
+                    var realOrigin = $"{realUri.Scheme}://{realUri.Host}";
+                    var rewrittenXml = xml.Replace(realOrigin, proxyUrl);
+                    var xmlBytes = Encoding.UTF8.GetBytes(rewrittenXml);
+                    // XML（GetCapabilities）很少變動，快取 1 小時
+                    _cache.Set(targetUrl, new WmsCacheEntry(xmlBytes, contentType), TimeSpan.FromHours(1));
+                    return Content(rewrittenXml, contentType);
+                }
 
-            // 非 XML（影像等二進位資料）直接回傳
-            var imageBytes = await response.Content.ReadAsByteArrayAsync();
-            return File(imageBytes, contentType);
+                // 非 XML（GetMap 影像）快取 30 分鐘
+                var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                _cache.Set(targetUrl, new WmsCacheEntry(imageBytes, contentType), TimeSpan.FromMinutes(30));
+                return File(imageBytes, contentType);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException)
+            {
+                return StatusCode(502, "讀取 WMS 回應內容時連線中斷，請稍後再試");
+            }
         }
 
         /// <summary>
@@ -140,20 +215,41 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
             // 還原被 URL encode 的目標網址
             var targetUrl = Uri.UnescapeDataString(rawQuery);
 
+            // 先查快取，命中則直接回傳
+            if (_cache.TryGetValue(targetUrl, out WmsCacheEntry? cachedEntry) && cachedEntry is not null)
+                return File(cachedEntry.Data, cachedEntry.ContentType);
+
             var client = _httpClientFactory.CreateClient("WmsProxy");
 
             var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{username}:{password}"));
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
-            var response = await client.GetAsync(targetUrl);
+            HttpResponseMessage response;
+            try
+            {
+                response = await GetWithRetryAsync(client, targetUrl);
+            }
+            catch (TaskCanceledException)
+            {
+                return StatusCode(504, "WMS 服務請求遒時，請稍後再試");
+            }
 
             if (!response.IsSuccessStatusCode)
                 return StatusCode((int)response.StatusCode, "WMS 服務回應錯誤");
 
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
-            var bytes = await response.Content.ReadAsByteArrayAsync();
 
-            return File(bytes, contentType);
+            try
+            {
+                var bytes = await response.Content.ReadAsByteArrayAsync();
+                // 影像快取 30 分鐘
+                _cache.Set(targetUrl, new WmsCacheEntry(bytes, contentType), TimeSpan.FromMinutes(30));
+                return File(bytes, contentType);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException)
+            {
+                return StatusCode(502, "讀取 WMS 回應內容時連線中斷，請稍後再試");
+            }
         }
         #endregion
     }
