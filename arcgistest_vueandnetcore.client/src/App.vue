@@ -1,12 +1,6 @@
 <template>
   <!-- 地圖會顯示在這個 div 裡面 -->
   <div id="viewDiv"></div>
-
-  <!-- 底圖切換面板 -->
-  <div class="custom-menu">
-    <select id="basemapSelect" style="margin-bottom: 12px;"></select>
-  </div>
-
 </template>
 
 <style>
@@ -226,6 +220,8 @@
 
 <!--初始化-->
 <script setup lang="ts">
+  import { getFs2WmsLayer } from "@/api/wmsLayer.js";
+
   try {
     // 使用 require 載入模組
     // 加上 @ts-ignore 後，TypeScript 會忽略下一行的型別檢查，錯誤「應有 1 個引數，但得到 2 個」就不會再出現了。
@@ -233,11 +229,13 @@
       "esri/views/SceneView",
       "esri/widgets/BasemapGallery",
       "esri/Basemap",
+      "esri/layers/WMSLayer",
       "esri/layers/WMTSLayer",
       "esri/identity/IdentityManager",
-      "esri/Graphic"],
+      "esri/Graphic",
+      "esri/config"],
       // @ts-ignore
-      (Map, SceneView, BasemapGallery, Basemap, WMTSLayer, esriId, Graphic) => {
+      (Map, SceneView, BasemapGallery, Basemap, WMSLayer, WMTSLayer, esriId, Graphic, esriConfig) => {
 
         //#region -- 自動還原 ArcGIS 登入憑證 (避免每次重新登入)
         const CREDENTIALS_KEY = "esriCredentials";
@@ -255,11 +253,31 @@
 
         // 每當新憑證建立時（登入後），自動儲存到 localStorage
         esriId.on("credential-create", () => {
-          localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(esriId.toJSON()));
+          try {
+            localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(esriId.toJSON()));
+          } catch (e) {
+            console.warn("[IdentityManager] 儲存憑證失敗，已略過：", e);
+          }
+        });
+
+        // 攔截 IdentityManager 內部的非同步錯誤，避免中斷系統
+        window.addEventListener("unhandledrejection", (event) => {
+          const reason = event.reason;
+          const msg = reason?.message ?? String(reason ?? "");
+          // 僅吞掉來自 IdentityManager 的錯誤（例如：登入取消、Token 過期等）
+          if (
+            msg.includes("identity") ||
+            msg.includes("token") ||
+            msg.includes("credential") ||
+            msg.includes("IdentityManager") ||
+            reason?.name === "identity:not-authorized" ||
+            reason?.code === "identity:not-authorized"
+          ) {
+            console.warn("[IdentityManager] 已攔截非同步錯誤，不中斷系統：", reason);
+            event.preventDefault(); // 阻止瀏覽器顯示 Uncaught error
+          }
         });
         //#endregion
-
-        //#region -- 初始化地圖和視圖
 
         //#region ◆台灣電子地圖 (WMTS)
         // 創建底圖
@@ -311,6 +329,77 @@
         });
         //#endregion
 
+        //#region --圖層選單
+        const layerMenu = document.createElement("div");
+        layerMenu.className = "custom-menu";
+
+        const menuTitle = document.createElement("h3");
+        menuTitle.textContent = "圖層選單";
+
+        const wmsLabel = document.createElement("label");
+        wmsLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
+
+        //#region ◆2015年全臺福衛二號影像 (WMS)
+        const fs2WmsCheckbox = document.createElement("input");
+        fs2WmsCheckbox.type = "checkbox";
+        fs2WmsCheckbox.id = "toggleWmsLayer";
+        fs2WmsCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
+
+        let fs2WmsLayer: any = null;
+
+        fs2WmsCheckbox.addEventListener("click", async () => {
+          const visible = fs2WmsCheckbox.checked;
+
+          try {
+            if (visible) {
+              // 呼叫後端 API 取得 WMS 圖層資訊並建立圖層
+              const layerInfo = await getFs2WmsLayer();
+              console.log("2015年全臺福衛二號影像 (WMS) 顯示圖層", layerInfo);
+
+              fs2WmsLayer = new WMSLayer({
+                url: layerInfo.url,
+                sublayers: [{ name: layerInfo.layerName, visible: true }]
+              });
+              map.add(fs2WmsLayer);
+            }
+            else {
+              // 移除 WMS 圖層（取消勾選時）
+              if (fs2WmsLayer) {
+                map.remove(fs2WmsLayer);
+                fs2WmsLayer = null;
+              }
+            }
+          }
+          catch (err) {
+            console.error("呼叫後端 API 失敗：", err);
+          }
+        });
+
+        const fs2WmsSpan = document.createElement("span");
+        fs2WmsSpan.textContent = "🗺️ 2015年全臺福衛二號影像 (WMS)";
+
+        wmsLabel.appendChild(fs2WmsCheckbox);
+        wmsLabel.appendChild(fs2WmsSpan);
+        //#endregion
+
+        layerMenu.appendChild(menuTitle);
+        layerMenu.appendChild(wmsLabel);
+
+        // 將選單添加到右上角
+        view.ui.add(layerMenu, "top-right");
+        //#endregion
+
+        //#region -- 設定 ArcGIS Proxy Rules（解決 CORS）
+        // ArcGIS SDK 偵測到請求目標符合 urlPrefix 時，會自動改為呼叫 proxyUrl
+        // 格式：GET /wmslayer/fs2/arcgisproxy?{完整目標URL}
+        esriConfig.request.proxyRules = [
+          {
+            urlPrefix: "https://wmstest.asrs.gov.tw",
+            proxyUrl: "/wmslayer/fs2/arcgisproxy"
+          }
+        ];
+        //#endregion
+
         //#region ◆底圖切換功能
         const basemapGallery = new BasemapGallery({
           view: view,
@@ -328,8 +417,6 @@
           position: "bottom-left",
           expanded: false
         });
-        //#endregion
-
         //#endregion
 
         //#region ◆自定義按鈕：我的位置
@@ -482,11 +569,9 @@
         // 將按鈕添加到地圖的左上角
         view.ui.add(customButton, "top-left");
         //#endregion
-
       });
   }
   catch (error) {
     console.error("載入 ArcGIS API for JavaScript 時發生錯誤：", error);
-    alert("無法載入地圖，請稍後再試。");
   }
 </script>
