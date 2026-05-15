@@ -309,7 +309,7 @@
       });
       //#endregion
 
-      //#region ◆使用 BasemapGallery 替代 BasemapToggle，支援多個底圖切換
+      //#region ◆底圖切換功能
       const basemapGallery = new BasemapGallery({
         view: view,
         source: [
@@ -326,36 +326,8 @@
         position: "bottom-left",
         expanded: false
       });
-      //#endregion
-
-      //#region ◆底圖切換功能
-      view.when(() => {
-        const basemapSelectEl = document.getElementById("basemapSelect");
-        if (!basemapSelectEl) return;
-        basemapSelectEl.addEventListener("change", (event) => {
-          const selectedBasemap = (event.target as HTMLSelectElement).value;
-          switch (selectedBasemap) {
-            // 台灣電子地圖 (WMTS)
-            case "taiwanWmts":
-              map.basemap = taiwanWmtsBasemap;
-              console.log("✅ 已切換到台灣電子地圖 (WMTS)");
-              break;
-            // 衛星影像
-            case "imagery":
-              map.basemap = imageryBasemap;
-              console.log("✅ 已切換到衛星影像");
-              break;
-            // 街道圖
-            case "streets":
-              map.basemap = streetsBasemap;
-              console.log("✅ 已切換到街道圖");
-              break;
-          }
-        });
-      });
-      //#endregion
+      //#endregion      
 
       //#endregion
-
     });
 </script>
