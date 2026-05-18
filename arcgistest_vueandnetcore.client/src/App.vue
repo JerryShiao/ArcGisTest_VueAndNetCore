@@ -216,17 +216,24 @@
         color: #0079c1;
       }
   /*============================================================*/
-</style>
+  /* WMTS 圖層在 3D 模式下停用時的視覺提示 */
+  label:has(input[type="checkbox"]:disabled) {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  /*============================================================*/
+  </style>
 
 <!--初始化-->
 <script setup lang="ts">
-  import { getFs2WmsLayer } from "@/api/wmsLayer.js";
+  import { getFs2WmsLayer, getFs2WmtsLayer } from "@/api/wmsLayer.js";
 
   try {
     // 使用 require 載入模組
     // 加上 @ts-ignore 後，TypeScript 會忽略下一行的型別檢查，錯誤「應有 1 個引數，但得到 2 個」就不會再出現了。
     require(["esri/Map",
       "esri/views/SceneView",
+      "esri/views/MapView",
       "esri/widgets/BasemapGallery",
       "esri/Basemap",
       "esri/layers/WMSLayer",
@@ -234,7 +241,7 @@
       "esri/identity/IdentityManager",
       "esri/Graphic"],
       // @ts-ignore
-      (Map, SceneView, BasemapGallery, Basemap, WMSLayer, WMTSLayer, esriId, Graphic) => {
+      (Map, SceneView, MapView, BasemapGallery, Basemap, WMSLayer, WMTSLayer, esriId, Graphic) => {
 
         //#region -- 自動還原 ArcGIS 登入憑證 (避免每次重新登入)
         const CREDENTIALS_KEY = "esriCredentials";
@@ -326,6 +333,16 @@
             heading: 0 // 方向角度 (0-360°，0=正北)
           }
         });
+
+        // 2D MapView（共用同一 Map 實例，初始不掛載 container）
+        const mapView = new MapView({
+          map: map,
+          zoom: 8,
+          center: [120.68, 24.15]
+        });
+
+        let isSceneView = true;        // 目前是否為 3D 模式
+        let currentView: any = view;   // 目前作用中的 view
         //#endregion
 
         //#region --圖層選單
@@ -334,11 +351,12 @@
 
         const menuTitle = document.createElement("h3");
         menuTitle.textContent = "圖層選單";
-
-        const wmsLabel = document.createElement("label");
-        wmsLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
+        layerMenu.appendChild(menuTitle);
 
         //#region ◆2015年全臺福衛二號影像 (WMS)
+        const fs2WmsLabel = document.createElement("label");
+        fs2WmsLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
+
         const fs2WmsCheckbox = document.createElement("input");
         fs2WmsCheckbox.type = "checkbox";
         fs2WmsCheckbox.id = "toggleWmsLayer";
@@ -392,12 +410,77 @@
         const fs2WmsSpan = document.createElement("span");
         fs2WmsSpan.textContent = "🗺️ 2015年全臺福衛二號影像 (WMS)";
 
-        wmsLabel.appendChild(fs2WmsCheckbox);
-        wmsLabel.appendChild(fs2WmsSpan);
+        fs2WmsLabel.appendChild(fs2WmsCheckbox);
+        fs2WmsLabel.appendChild(fs2WmsSpan);
+        layerMenu.appendChild(fs2WmsLabel);
         //#endregion
 
-        layerMenu.appendChild(menuTitle);
-        layerMenu.appendChild(wmsLabel);
+        //#region ◆2015年全臺福衛二號影像 (WMTS)
+        const fs2WmtsLabel = document.createElement("label");
+        fs2WmtsLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
+
+        const fs2WmtsCheckbox = document.createElement("input");
+        fs2WmtsCheckbox.type = "checkbox";
+        fs2WmtsCheckbox.id = "toggleWmtsLayer";
+        fs2WmtsCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
+        fs2WmtsCheckbox.disabled = true; // 3D 模式不支援，切換至 2D 後才啟用
+
+        let fs2WmtsLayer: any = null;
+
+        // 帶重試的預先載入：最多重試 3 次，每次失敗延遲 3 秒後再試
+        const preloadFs2WmtsLayer = async (maxRetries = 3, delayMs = 3000) => {
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+               const layerInfo = await getFs2WmtsLayer();
+               console.log("2015年全臺福衛二號影像 (WMTS) 預先載入成功", layerInfo);
+              fs2WmtsLayer = new WMTSLayer({
+                url: layerInfo.url,
+                activeLayer: {
+                  id: layerInfo.layerName,
+                  tileMatrixSetId: "EPSG:900913" // 直接在建構時指定 Web Mercator，與 SceneView 相容
+                },
+                visible: false
+              });
+              // 先明確等待 GetCapabilities 載入完成，確保 load 失敗時能被 catch 捕捉並重試
+              await fs2WmtsLayer.load();
+
+              // 不立即加入 map；切換至 2D 時才加入，避免 SceneView tiling-scheme-unsupported
+              return; // 成功即結束
+            } catch (err) {
+              // 確保損壞的 layer 物件不會殘留，讓下次重試重新建立
+              if (fs2WmtsLayer) {
+                try { map.remove(fs2WmtsLayer); } catch (_) { }
+                fs2WmtsLayer = null;
+              }
+              console.warn(`WMTS 圖層預先載入失敗（第 ${attempt}/${maxRetries} 次）：`, err);
+              if (attempt < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+              } else {
+                console.error("WMTS 圖層預先載入已達重試上限，放棄。");
+              }
+            }
+          }
+        };
+        preloadFs2WmtsLayer();
+
+        fs2WmtsCheckbox.addEventListener("click", () => {
+          const visible = fs2WmtsCheckbox.checked;
+
+          if (fs2WmtsLayer) {
+            fs2WmtsLayer.visible = visible;
+          } else {
+            console.warn("WMTS 圖層尚未載入完成，請稍後再試");
+            fs2WmtsCheckbox.checked = false;
+          }
+        });
+
+        const fs2WmtsSpan = document.createElement("span");
+        fs2WmtsSpan.textContent = "🗺️ 2015年全臺福衛二號影像 (WMTS，僅2D)";
+
+        fs2WmtsLabel.appendChild(fs2WmtsCheckbox);
+        fs2WmtsLabel.appendChild(fs2WmtsSpan);
+        layerMenu.appendChild(fs2WmtsLabel);
+        //#endregion      
 
         // 將選單添加到右上角
         view.ui.add(layerMenu, "top-right");
@@ -422,6 +505,80 @@
         });
         //#endregion
 
+        //#region ◆MapView 底圖選擇器（2D 模式用）
+        const mapBasemapGallery = new BasemapGallery({
+          view: mapView,
+          source: [
+            taiwanWmtsBasemap,
+            imageryBasemap,
+            streetsBasemap
+          ]
+        });
+        //#endregion
+
+        //#region ◆2D/3D 切換按鈕
+        const switchViewBtn = document.createElement("button");
+        switchViewBtn.className = "custom-button";
+        switchViewBtn.textContent = "🗺️ 切換至 2D";
+
+        switchViewBtn.addEventListener("click", () => {
+          if (isSceneView) {
+            // ── 切換至 2D ──
+            // 1. WMTS 加入 map（僅 2D 相容）
+            if (fs2WmtsLayer && !map.layers.includes(fs2WmtsLayer)) {
+              map.add(fs2WmtsLayer);
+            }
+            // 2. 若 WMTS checkbox 勾選，確保圖層可見
+            if (fs2WmtsLayer) {
+              fs2WmtsLayer.visible = fs2WmtsCheckbox.checked;
+            }
+            // 3. 啟用 WMTS checkbox
+            fs2WmtsCheckbox.disabled = !fs2WmtsLayer;
+
+            // 4. 容器交換
+            const center = (view as any).center ?? { longitude: 120.68, latitude: 24.15 };
+            view.container = null as any;
+            mapView.center = center;
+            mapView.container = "viewDiv";
+
+            // 5. 將底圖 gallery 與按鈕移至 mapView
+            mapView.ui.add({ component: mapBasemapGallery, position: "bottom-left", expanded: false });
+            mapView.ui.add(customButton, "top-left");
+            mapView.ui.add(switchViewBtn, "top-left");
+            mapView.ui.add(layerMenu, "top-right");
+
+            currentView = mapView;
+            isSceneView = false;
+            switchViewBtn.textContent = "🌐 切換至 3D";
+          } else {
+            // ── 切換至 3D ──
+            // 1. 停用並取消勾選 WMTS checkbox
+            fs2WmtsCheckbox.disabled = true;
+            fs2WmtsCheckbox.checked = false;
+            // 2. 從 map 移除 WMTS（SceneView 不支援）
+            if (fs2WmtsLayer) {
+              fs2WmtsLayer.visible = false;
+              try { map.remove(fs2WmtsLayer); } catch (_) { }
+            }
+
+            // 3. 容器交換
+            const center = (mapView as any).center ?? { longitude: 120.68, latitude: 24.15 };
+            mapView.container = null as any;
+            view.container = "viewDiv";
+
+            // 4. 將底圖 gallery 與按鈕移至 view（SceneView）
+            view.ui.add({ component: basemapGallery, position: "bottom-left", expanded: false });
+            view.ui.add(customButton, "top-left");
+            view.ui.add(switchViewBtn, "top-left");
+            view.ui.add(layerMenu, "top-right");
+
+            currentView = view;
+            isSceneView = true;
+            switchViewBtn.textContent = "🗺️ 切換至 2D";
+          }
+        });
+        //#endregion
+
         //#region ◆自定義按鈕：我的位置
         // [我的位置]按鈕
         const customButton = document.createElement("button");
@@ -441,19 +598,14 @@
 
                 console.log(`使用者位置：經度 ${userLongitude}, 緯度 ${userLatitude}`);
 
-                // 移動相機到使用者位置（使用 camera 確保 SceneView 座標精確）
-                view.goTo({
-                  position: {
-                    longitude: userLongitude,
-                    latitude: userLatitude,
-                    z: 3000   // 相機高度（公尺），約街道俯視層級
-                  },
-                  tilt: 0,    // 俯視（無傾斜角）
-                  heading: 0
-                }).then(() => {
+                // 移動相機到使用者位置（依視圖模式使用不同參數）
+                const goToTarget = isSceneView
+                  ? { position: { longitude: userLongitude, latitude: userLatitude, z: 3000 }, tilt: 0, heading: 0 }
+                  : { center: [userLongitude, userLatitude], zoom: 16 };
+                currentView.goTo(goToTarget).then(() => {
                   // 移除舊的使用者位置標記（先收集再移除，避免修改集合時出錯）
                   const toRemove: any[] = [];
-                  view.graphics.forEach((graphic: any) => {
+                  currentView.graphics.forEach((graphic: any) => {
                     if (
                       (graphic.popupTemplate && graphic.popupTemplate.title === "📍 您的位置") ||
                       (graphic.attributes && graphic.attributes.isUserLocationPulse)
@@ -461,7 +613,7 @@
                       toRemove.push(graphic);
                     }
                   });
-                  toRemove.forEach((g: any) => view.graphics.remove(g));
+                  toRemove.forEach((g: any) => currentView.graphics.remove(g));
 
                   // 清除舊的脈衝動畫
                   if ((window as any)._userLocationAnimInterval) {
@@ -475,62 +627,110 @@
                     latitude: userLatitude
                   };
 
-                  // 脈衝光環標記（使用 point-3d 符號，相容 SceneView）
-                  const pulseGraphic = new Graphic({
-                    geometry: pointGeometry,
-                    symbol: {
-                      type: "point-3d",
-                      symbolLayers: [{
-                        type: "icon",
+                  if (isSceneView) {
+                    // ── SceneView（3D）：使用 point-3d 符號 ──
+                    const pulseGraphic = new Graphic({
+                      geometry: pointGeometry,
+                      symbol: {
+                        type: "point-3d",
+                        symbolLayers: [{
+                          type: "icon",
+                          size: "18px",
+                          resource: { primitive: "circle" },
+                          material: { color: [0, 122, 255, 0] },
+                          outline: { color: [0, 122, 255, 0.9], size: 2 }
+                        }]
+                      },
+                      attributes: { isUserLocationPulse: true }
+                    });
+
+                    const userLocationGraphic = new Graphic({
+                      geometry: pointGeometry,
+                      symbol: {
+                        type: "point-3d",
+                        symbolLayers: [{
+                          type: "icon",
+                          size: "20px",
+                          resource: { primitive: "circle" },
+                          material: { color: [0, 122, 255] },
+                          outline: { color: [255, 255, 255], size: 3 }
+                        }]
+                      },
+                      popupTemplate: {
+                        title: "📍 您的位置",
+                        content: `經度: ${userLongitude.toFixed(5)}<br/>緯度: ${userLatitude.toFixed(5)}<br/>精確度: ±${position.coords.accuracy.toFixed(0)} 公尺`
+                      }
+                    });
+
+                    currentView.graphics.add(pulseGraphic);
+                    currentView.graphics.add(userLocationGraphic);
+
+                    // 脈衝動畫
+                    let pulseStep = 0;
+                    (window as any)._userLocationAnimInterval = setInterval(() => {
+                      pulseStep = (pulseStep + 1) % 40;
+                      const progress = pulseStep / 40;
+                      const size = 20 + progress * 40;
+                      const opacity = (1 - progress) * 0.9;
+                      pulseGraphic.symbol = {
+                        type: "point-3d",
+                        symbolLayers: [{
+                          type: "icon",
+                          size: `${size}px`,
+                          resource: { primitive: "circle" },
+                          material: { color: [0, 122, 255, 0] },
+                          outline: { color: [0, 122, 255, opacity], size: 2 }
+                        }]
+                      } as any;
+                    }, 50);
+                  } else {
+                    // ── MapView（2D）：使用 simple-marker 符號 ──
+                    const pulseGraphic = new Graphic({
+                      geometry: pointGeometry,
+                      symbol: {
+                        type: "simple-marker",
+                        style: "circle",
+                        color: [0, 122, 255, 0],
                         size: "18px",
-                        resource: { primitive: "circle" },
-                        material: { color: [0, 122, 255, 0] },
-                        outline: { color: [0, 122, 255, 0.9], size: 2 }
-                      }]
-                    },
-                    attributes: { isUserLocationPulse: true }
-                  });
+                        outline: { color: [0, 122, 255, 0.9], width: 2 }
+                      },
+                      attributes: { isUserLocationPulse: true }
+                    });
 
-                  // 主要位置標記
-                  const userLocationGraphic = new Graphic({
-                    geometry: pointGeometry,
-                    symbol: {
-                      type: "point-3d",
-                      symbolLayers: [{
-                        type: "icon",
+                    const userLocationGraphic = new Graphic({
+                      geometry: pointGeometry,
+                      symbol: {
+                        type: "simple-marker",
+                        style: "circle",
+                        color: [0, 122, 255],
                         size: "20px",
-                        resource: { primitive: "circle" },
-                        material: { color: [0, 122, 255] },
-                        outline: { color: [255, 255, 255], size: 3 }
-                      }]
-                    },
-                    popupTemplate: {
-                      title: "📍 您的位置",
-                      content: `經度: ${userLongitude.toFixed(5)}<br/>緯度: ${userLatitude.toFixed(5)}<br/>精確度: ±${position.coords.accuracy.toFixed(0)} 公尺`
-                    }
-                  });
+                        outline: { color: [255, 255, 255], width: 3 }
+                      },
+                      popupTemplate: {
+                        title: "📍 您的位置",
+                        content: `經度: ${userLongitude.toFixed(5)}<br/>緯度: ${userLatitude.toFixed(5)}<br/>精確度: ±${position.coords.accuracy.toFixed(0)} 公尺`
+                      }
+                    });
 
-                  view.graphics.add(pulseGraphic);
-                  view.graphics.add(userLocationGraphic);
+                    currentView.graphics.add(pulseGraphic);
+                    currentView.graphics.add(userLocationGraphic);
 
-                  // 啟動脈衝動畫：光環由小擴大並淡出，循環播放
-                  let pulseStep = 0;
-                  (window as any)._userLocationAnimInterval = setInterval(() => {
-                    pulseStep = (pulseStep + 1) % 40;
-                    const progress = pulseStep / 40;
-                    const size = 20 + progress * 40; // 20px → 60px
-                    const opacity = (1 - progress) * 0.9;
-                    pulseGraphic.symbol = {
-                      type: "point-3d",
-                      symbolLayers: [{
-                        type: "icon",
+                    // 脈衝動畫（2D）
+                    let pulseStep = 0;
+                    (window as any)._userLocationAnimInterval = setInterval(() => {
+                      pulseStep = (pulseStep + 1) % 40;
+                      const progress = pulseStep / 40;
+                      const size = 20 + progress * 40;
+                      const opacity = (1 - progress) * 0.9;
+                      pulseGraphic.symbol = {
+                        type: "simple-marker",
+                        style: "circle",
+                        color: [0, 122, 255, 0],
                         size: `${size}px`,
-                        resource: { primitive: "circle" },
-                        material: { color: [0, 122, 255, 0] },
-                        outline: { color: [0, 122, 255, opacity], size: 2 }
-                      }]
-                    } as any;
-                  }, 50);
+                        outline: { color: [0, 122, 255, opacity], width: 2 }
+                      } as any;
+                    }, 50);
+                  }
 
                   customButton.textContent = "📍 我的位置";
                   customButton.disabled = false;
@@ -571,6 +771,7 @@
 
         // 將按鈕添加到地圖的左上角
         view.ui.add(customButton, "top-left");
+        view.ui.add(switchViewBtn, "top-left");
         //#endregion
       });
   }

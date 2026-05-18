@@ -13,7 +13,9 @@ builder.Services.AddReverseProxy()
 .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"))
     .AddTransforms(ctx =>
     {
-        if (ctx.Route.RouteId != "fs2-route") return;
+        // 只針對特定路由注入 Basic Auth 邏輯
+        var routesNeedingAuth = new HashSet<string> { "fs2-route", "asrs-route" };
+        if (!routesNeedingAuth.Contains(ctx.Route.RouteId)) return;
 
         var account = builder.Configuration["AsrsGovApi:ConnectAccount"] ?? "";
         var password = builder.Configuration["AsrsGovApi:ConnectPassword"] ?? "";

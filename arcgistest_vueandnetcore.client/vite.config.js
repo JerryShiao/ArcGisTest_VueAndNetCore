@@ -55,6 +55,10 @@ export default defineConfig({
         target,
         secure: false
       },
+      '^/api-asrs': {
+        target,
+        secure: false
+      },
       '^/api-fs2': {
         target,
         secure: false

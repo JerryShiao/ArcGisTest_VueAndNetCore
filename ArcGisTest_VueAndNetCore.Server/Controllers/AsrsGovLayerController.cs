@@ -24,19 +24,40 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
             _asrsGovApi = asrsGovApiOptions.Value;
         }
 
-        #region ◆福衛二號影像
+        #region ◆福衛二號影像(WMS)
         /// <summary>
         /// 取得 2015 年全臺福衛二號影像的 WMS 圖層配置。
         /// </summary>
-        /// <returns>包含圖層名稱、代理 URL、格式設定及 WMS 版本資訊的 Ok 結果。</returns>
-        [HttpGet("fs2")]
+        /// <returns>包含圖層名稱、代理 URL、格式設定及版本資訊的 Ok 結果。</returns>
+        [HttpGet("fs2-wms")]
         public IActionResult GetFs2WmsLayer()
         {
-            // url 指向後端 proxy，前端不直接接觸 WMS 帳密
             var layerInfo = new
             {
                 name = "2015年全臺福衛二號影像", // 圖層名稱
-                url = "/api-fs2/FS2/wms", // 代理 URL
+                url = "/api-fs2" + _asrsGovApi.Fs2WmsUrl, // 代理 URL
+                layerName = "FS2:fs2015-1_masked_2m_enhance", // WMS 圖層名稱
+                format = "image/gif", // 圖像格式
+                transparent = false,  // 是否透明
+                version = "1.1.0"     // WMS 版本
+            };
+
+            return Ok(layerInfo);
+        }
+        #endregion
+
+        #region ◆福衛二號影像(WMTS)
+        /// <summary>
+        /// 取得 2015 年全臺福衛二號影像的 WMTS 圖層配置。
+        /// </summary>
+        /// <returns>包含圖層名稱、代理 URL、格式設定及版本資訊的 Ok 結果。</returns>
+        [HttpGet("fs2-wmts")]
+        public IActionResult GetFs2WmtsLayer()
+        {
+            var layerInfo = new
+            {
+                name = "2015年全臺福衛二號影像", // 圖層名稱
+                url = "/api-fs2" + _asrsGovApi.Fs2WmtsUrl, // 代理 URL
                 layerName = "FS2:fs2015-1_masked_2m_enhance", // WMS 圖層名稱
                 format = "image/gif", // 圖像格式
                 transparent = false,  // 是否透明
