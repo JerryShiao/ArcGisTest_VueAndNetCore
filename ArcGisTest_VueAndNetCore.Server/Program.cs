@@ -1,21 +1,93 @@
+using Yarp.ReverseProxy.Transforms;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-
 builder.Services.AddControllers();
-builder.Services.AddMemoryCache(); // 註冊 IMemoryCache，供 WMS Proxy 快取回應使用
-builder.Services.AddHttpClient("WmsProxy", client =>
-{
-    // 設為 90 秒：確保在前端 SDK timeout（120 秒）之前能回傳結果或錯誤
-    client.Timeout = TimeSpan.FromSeconds(90);
-}); // 註冊 HttpClient，供 WMS 代理使用
+
+// 註冊 IMemoryCache，供 Proxy 快取回應使用
+builder.Services.AddMemoryCache();
+
+// 註冊 YARP 服務，並指定讀取 appsettings.json 中的 "ReverseProxy" 區塊
+builder.Services.AddReverseProxy()
+.LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"))
+    .AddTransforms(ctx =>
+    {
+        if (ctx.Route.RouteId != "fs2-route") return;
+
+        var account = builder.Configuration["AsrsGovApi:ConnectAccount"] ?? "";
+        var password = builder.Configuration["AsrsGovApi:ConnectPassword"] ?? "";
+        var credentials = Convert.ToBase64String(
+            System.Text.Encoding.ASCII.GetBytes($"{account}:{password}"));
+
+        // 1. 注入 Basic Auth 標頭
+        ctx.AddRequestTransform(reqCtx =>
+        {
+            reqCtx.ProxyRequest.Headers.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", credentials);
+            return ValueTask.CompletedTask;
+        });
+
+        // 2. XML 回應：將真實 origin 替換成 proxy 前綴，讓 ArcGIS SDK 後續請求繼續走 YARP
+        ctx.AddResponseTransform(async resCtx =>
+        {
+            var contentType = resCtx.ProxyResponse?.Content.Headers.ContentType?.ToString() ?? "";
+            if (!contentType.Contains("xml", StringComparison.OrdinalIgnoreCase)) return;
+
+            resCtx.SuppressResponseBody = true;
+
+            // 手動偵測並解壓縮，因為 YARP 的 ProxyResponse 不會自動解壓縮
+            var contentEncoding = resCtx.ProxyResponse!.Content.Headers.ContentEncoding
+                                         .FirstOrDefault()?.ToLowerInvariant();
+            Stream rawStream = await resCtx.ProxyResponse.Content.ReadAsStreamAsync();
+            Stream bodyStream = contentEncoding switch
+            {
+                "gzip"    => new System.IO.Compression.GZipStream(rawStream,
+                                 System.IO.Compression.CompressionMode.Decompress),
+                "br"      => new System.IO.Compression.BrotliStream(rawStream,
+                                 System.IO.Compression.CompressionMode.Decompress),
+                "deflate" => new System.IO.Compression.DeflateStream(rawStream,
+                                 System.IO.Compression.CompressionMode.Decompress),
+                _         => rawStream
+            };
+            using var reader = new System.IO.StreamReader(bodyStream);
+            var xml = await reader.ReadToEndAsync();
+
+            // 在請求時從 YARP IReverseProxyFeature 取得實際使用的目的地位址，確保資料正確
+            var proxyFeature = resCtx.HttpContext.Features
+                .Get<Yarp.ReverseProxy.Model.IReverseProxyFeature>();
+            var realAddress = proxyFeature?.ProxiedDestination?.Model.Config.Address.TrimEnd('/') ?? "";
+
+            // 從路由 Path 取得代理前綴，例如 "/api-fs2/{**catchall}" → "/api-fs2"
+            var pathPattern = ctx.Route.Match.Path ?? "";
+            var proxyPrefix = pathPattern.Split("/{**", 2)[0];
+
+            // 將 XML 中的上游基底路徑整段替換成代理前綴，讓 ArcGIS SDK 後續請求走 YARP
+            var requestOrigin = $"{resCtx.HttpContext.Request.Scheme}://{resCtx.HttpContext.Request.Host}";
+
+            // WMS 伺服器依據轉發的 Host 標頭動態生成 URL，因此 XML 中的 origin 已是 requestOrigin，
+            // 只需將路徑部分從上游路徑（如 /asofb）替換成代理前綴（如 /api-fs2）
+            var realPath = new Uri(realAddress).AbsolutePath.TrimEnd('/'); // e.g. "/asofb"
+            var rewritten = xml.Replace($"{requestOrigin}{realPath}", $"{requestOrigin}{proxyPrefix}");
+            var bytes = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(rewritten);
+
+            // 移除壓縮相關標頭，避免瀏覽器嘗試解壓縮已展開的純文字
+            resCtx.HttpContext.Response.Headers.Remove("Content-Encoding");
+            resCtx.HttpContext.Response.Headers.Remove("Transfer-Encoding");
+
+            resCtx.HttpContext.Response.ContentType = contentType;
+            resCtx.HttpContext.Response.ContentLength = bytes.Length;
+            await resCtx.HttpContext.Response.Body.WriteAsync(bytes);
+        });
+    });
+
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
 #region 註冊 appsettings.json 的參數設定
-// WMS API 配置
-builder.Services.Configure<ArcGisTest_VueAndNetCore.Server.Model.AppSettings.WmsApiClass>(
-    builder.Configuration.GetSection("WmsApi"));
+// 航遙測圖資 API 配置
+builder.Services.Configure<ArcGisTest_VueAndNetCore.Server.Model.AppSettings.AsrsGovApi>(
+    builder.Configuration.GetSection("AsrsGovApi"));
 #endregion
 
 var app = builder.Build();
@@ -32,6 +104,9 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseAuthorization();
+
+// 啟用 YARP 路由對應 (建議放在 UseAuthorization 之後)
+app.MapReverseProxy();
 
 app.MapControllers();
 

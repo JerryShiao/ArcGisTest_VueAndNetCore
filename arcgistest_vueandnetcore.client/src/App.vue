@@ -232,10 +232,9 @@
       "esri/layers/WMSLayer",
       "esri/layers/WMTSLayer",
       "esri/identity/IdentityManager",
-      "esri/Graphic",
-      "esri/config"],
+      "esri/Graphic"],
       // @ts-ignore
-      (Map, SceneView, BasemapGallery, Basemap, WMSLayer, WMTSLayer, esriId, Graphic, esriConfig) => {
+      (Map, SceneView, BasemapGallery, Basemap, WMSLayer, WMTSLayer, esriId, Graphic) => {
 
         //#region -- 自動還原 ArcGIS 登入憑證 (避免每次重新登入)
         const CREDENTIALS_KEY = "esriCredentials";
@@ -402,20 +401,6 @@
 
         // 將選單添加到右上角
         view.ui.add(layerMenu, "top-right");
-        //#endregion
-
-        //#region -- 設定 ArcGIS Proxy Rules（解決 CORS）
-        // ArcGIS SDK 偵測到請求目標符合 urlPrefix 時，會自動改為呼叫 proxyUrl
-        // 格式：GET /wmslayer/fs2/arcgisproxy?{完整目標URL}
-        esriConfig.request.proxyRules = [
-          {
-            urlPrefix: "https://wmstest.asrs.gov.tw",
-            proxyUrl: "/wmslayer/fs2/arcgisproxy"
-          }
-        ];
-
-        // 延長 SDK 請求逾時至 120 秒（預設約 60 秒），避免 WMS 服務回應慢時拋出 Timeout exceeded
-        esriConfig.request.timeout = 120000;
         //#endregion
 
         //#region ◆底圖切換功能

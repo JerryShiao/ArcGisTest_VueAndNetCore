@@ -1,0 +1,50 @@
+using ArcGisTest_VueAndNetCore.Server.Model.AppSettings;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+
+namespace ArcGisTest_VueAndNetCore.Server.Controllers
+{
+    /// <summary>
+    /// 「航遙測圖資」圖層代理控制器，負責轉發前端對圖層服務的請求，並添加必要的認證資訊
+    /// </summary>
+    [ApiController]
+    [Route("[controller]")]
+    public class AsrsGovLayerController : ControllerBase
+    {
+        /// <summary>
+        /// 航遙測圖資 API 配置
+        /// </summary>
+        private readonly AsrsGovApi _asrsGovApi;
+
+        /// <summary>
+        /// ◆建構子
+        /// <param name="asrsGovApiOptions">航遙測圖資 API 配置選項</param>
+        public AsrsGovLayerController(IOptions<AsrsGovApi> asrsGovApiOptions)
+        {
+            _asrsGovApi = asrsGovApiOptions.Value;
+        }
+
+        #region ◆福衛二號影像
+        /// <summary>
+        /// 取得 2015 年全臺福衛二號影像的 WMS 圖層配置。
+        /// </summary>
+        /// <returns>包含圖層名稱、代理 URL、格式設定及 WMS 版本資訊的 Ok 結果。</returns>
+        [HttpGet("fs2")]
+        public IActionResult GetFs2WmsLayer()
+        {
+            // url 指向後端 proxy，前端不直接接觸 WMS 帳密
+            var layerInfo = new
+            {
+                name = "2015年全臺福衛二號影像", // 圖層名稱
+                url = "/api-fs2/FS2/wms", // 代理 URL
+                layerName = "FS2:fs2015-1_masked_2m_enhance", // WMS 圖層名稱
+                format = "image/gif", // 圖像格式
+                transparent = false,  // 是否透明
+                version = "1.1.0"     // WMS 版本
+            };
+
+            return Ok(layerInfo);
+        }
+        #endregion
+    }
+}

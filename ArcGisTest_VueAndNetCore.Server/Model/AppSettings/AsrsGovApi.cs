@@ -1,9 +1,9 @@
 ﻿namespace ArcGisTest_VueAndNetCore.Server.Model.AppSettings
 {
     /// <summary>
-    /// WMS API 設定檔配置類別
+    /// 航遙測圖資 API 設定檔配置類別
     /// </summary>
-    public class WmsApiClass
+    public class AsrsGovApi
     {
         /// <summary>
         /// 連線帳號
@@ -68,6 +68,19 @@
         {
             get => fs2WmsUrl;
             set => fs2WmsUrl = value;
+        }
+
+        /// <summary>
+        /// 福衛影像(WMTS) 服務的 URL
+        /// </summary>
+        private string fs2WmtsUrl = string.Empty;
+        /// <summary>
+        /// 福衛影像(WMTS) 服務的 URL
+        /// </summary>
+        public string Fs2WmtsUrl
+        {
+            get => fs2WmtsUrl;
+            set => fs2WmtsUrl = value;
         }
 
     }//class end
