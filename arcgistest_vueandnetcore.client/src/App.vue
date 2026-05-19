@@ -288,27 +288,94 @@
         });
         //#endregion
 
-        //#region -- 高程圖層初始化
-        const housePriceElevationLayer = new ElevationLayer({
-          url: "/api-ltgis/server/rest/services/test/Natural_Getresidential20260518_tif/ImageServer"
-        });
+        //#region -- 房價圖層初始化
+        const HOUSE_PRICE_IMAGE_SERVER = "/api-ltgis/server/rest/services/test/Natural_Getresidential20260518_tif/ImageServer";
 
-        const housePriceImageryLayer = new ImageryLayer({
-          url: "/api-ltgis/server/rest/services/test/Natural_Getresidential20260518_tif/ImageServer",
-          opacity: 0.7,
-          visible: false,
-          renderer: {
-            type: "raster-stretch",
-            stretchType: "min-max",
-            colorRamp: {
-              type: "multipart",
-              colorRamps: [
-                { fromColor: [0, 0, 255, 255], toColor: [0, 255, 0, 255] },  // 低房價：藍 → 綠
-                { fromColor: [0, 255, 0, 255], toColor: [255, 0, 0, 255] }   // 高房價：綠 → 紅
-              ]
+        let housePriceImageryLayer: any = null;
+        let housePriceElevationLayer: any = null;
+
+        // 先透過 fetch 查詢服務統計，確認範圍後再建立圖層，避免 LayerView 建立失敗
+        const initHousePriceLayers = async () => {
+          try {
+            // 直接查詢 ImageServer 根端點取得服務資訊（minValues / maxValues）
+            const res = await fetch(`${HOUSE_PRICE_IMAGE_SERVER}?f=json`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const text = await res.text();
+            if (!text || text.trim() === "") throw new Error("服務回傳空白內容");
+            const info = JSON.parse(text);
+            console.log("[房價服務] 服務資訊:", info);
+
+            // 從服務根端點取得像素值範圍
+            let minVal: number = info?.minValues?.[0] ?? info?.statistics?.[0]?.min ?? 0;
+            let maxVal: number = info?.maxValues?.[0] ?? info?.statistics?.[0]?.max ?? 1;
+
+            // 若 min/max 都為 0，嘗試從 /statistics 端點補查
+            if (minVal === 0 && maxVal === 0) {
+              try {
+                const res2 = await fetch(`${HOUSE_PRICE_IMAGE_SERVER}/statistics?f=json`);
+                const stats = await res2.json();
+                console.log("[房價服務] /statistics:", stats);
+                minVal = stats?.[0]?.min ?? stats?.statistics?.[0]?.min ?? 0;
+                maxVal = stats?.[0]?.max ?? stats?.statistics?.[0]?.max ?? 1;
+              } catch (_) { /* 補查失敗則維持原值 */ }
             }
+
+            console.log(`[房價服務] 像素值範圍: ${minVal} ~ ${maxVal}`);
+            // 建立 ImageryLayer（彩色熱力圖）
+            housePriceImageryLayer = new ImageryLayer({
+              url: HOUSE_PRICE_IMAGE_SERVER,
+              opacity: 0.7,
+              visible: false,
+              renderer: {
+                type: "raster-stretch",
+                stretchType: "min-max",
+                statistics: [{
+                  min: minVal,
+                  max: maxVal,
+                  avg: (minVal + maxVal) / 2,
+                  stddev: (maxVal - minVal) / 6
+                }],
+                colorRamp: {
+                  type: "multipart",
+                  colorRamps: [
+                    { fromColor: [0, 0, 255, 255], toColor: [0, 255, 0, 255] },  // 低房價：藍 → 綠
+                    { fromColor: [0, 255, 0, 255], toColor: [255, 0, 0, 255] }   // 高房價：綠 → 紅
+                  ]
+                }
+              } as any
+            });
+
+            // 建立 ElevationLayer（地形依房價高低起伏）
+            // targetMaxMeters：最高房價對應的公尺數，值越小 → 起伏越誇張
+            const targetMaxMeters = 1;
+            const scaleFactor = maxVal > 0 ? maxVal / targetMaxMeters : 1;
+            console.log(`[房價服務] ElevationLayer scaleFactor=${scaleFactor.toFixed(2)}`);
+
+            housePriceElevationLayer = new ElevationLayer({
+              url: HOUSE_PRICE_IMAGE_SERVER,
+              // noDataInterpretation: "no-data-value"：NoData 區域（無房價資料）穿透到下層 world-elevation，
+              // 避免整片地形被 0 值覆蓋成平地
+              noDataInterpretation: "no-data-value" as any,
+              renderingRule: {
+                rasterFunction: "ArithmeticFunction",
+                rasterFunctionArguments: {
+                  Operation: 4,         // 4 = Divide
+                  Raster2: scaleFactor,
+                  ExtentType: 1,
+                  CellsizeType: 0
+                }
+              } as any
+            });
+
+            // 啟用 checkbox
+            housePriceCheckbox.disabled = false;
+            housePriceCheckbox.title = "";
+            console.log("[房價服務] 圖層初始化完成，可勾選顯示。");
+          } catch (err) {
+            console.error("[房價服務] 初始化失敗：", err);
+            housePriceCheckbox.title = "服務載入失敗，請檢查主控台日誌";
           }
-        });
+        };
         //#endregion
 
         //#region ◆台灣電子地圖 (WMTS)
@@ -357,6 +424,11 @@
             position: { x: 120.68, y: 24.15, z: 50000 },
             tilt: 45,  // 傾斜角度 (0-90°，0=俯視，90=平視)
             heading: 0 // 方向角度 (0-360°，0=正北)
+          },
+          // 垂直誇張：放大地形高低差異的視覺效果
+          // 若起伏還是不明顯，可進一步加大此值（最高 8）
+          environment: {
+            verticalExaggeration: 8
           }
         });
 
@@ -515,23 +587,30 @@
         const housePriceCheckbox = document.createElement("input");
         housePriceCheckbox.type = "checkbox";
         housePriceCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
+        housePriceCheckbox.disabled = true; // 統計載入完成前停用
+        housePriceCheckbox.title = "載入中，請稍候...";
 
         housePriceCheckbox.addEventListener("click", () => {
+          if (!housePriceImageryLayer || !housePriceElevationLayer) {
+            console.warn("[房價圖層] 尚未初始化完成，請稍後再試");
+            housePriceCheckbox.checked = false;
+            return;
+          }
+
           const visible = housePriceCheckbox.checked;
 
-          housePriceImageryLayer.visible = visible;
-
-          // 同步切換高程效果（可選：不切換則保持地形為房價形狀）
-          housePriceElevationLayer.visible = visible;
-
           if (visible) {
+            // 加入彩色房價影像圖層
             if (!map.layers.includes(housePriceImageryLayer)) {
               map.add(housePriceImageryLayer);
             }
+            housePriceImageryLayer.visible = true;
+            // 加入房價高程圖層（地形依房價高低起伏）
             if (!map.ground.layers.includes(housePriceElevationLayer)) {
               map.ground.layers.add(housePriceElevationLayer);
             }
           } else {
+            housePriceImageryLayer.visible = false;
             if (map.layers.includes(housePriceImageryLayer)) {
               map.remove(housePriceImageryLayer);
             }
@@ -542,7 +621,7 @@
         });
 
         const housePriceSpan = document.createElement("span");
-        housePriceSpan.textContent = "🏠 時價登錄房價 (3D視覺化)";
+        housePriceSpan.textContent = "🏠 時價登錄房價 (地形3D視覺化)";
 
         housePriceLabel.appendChild(housePriceCheckbox);
         housePriceLabel.appendChild(housePriceSpan);
@@ -551,6 +630,9 @@
 
         // 將選單添加到右上角
         view.ui.add(layerMenu, "top-right");
+
+        // 非同步初始化房價圖層（統計取得後才啟用 checkbox）
+        initHousePriceLayers();
         //#endregion
 
         //#region ◆底圖切換功能
