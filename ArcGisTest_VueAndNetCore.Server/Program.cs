@@ -103,7 +103,11 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
+// 開發環境才啟用 HTTPS 重定向，避免生產環境因為沒有正確設定 SSL 證書而無法運行
+if (app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseAuthorization();
 
