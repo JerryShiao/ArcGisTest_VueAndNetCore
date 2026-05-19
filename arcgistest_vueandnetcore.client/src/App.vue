@@ -364,12 +364,11 @@
 
         let fs2WmsLayer: any = null;
 
-        // 帶重試的預先載入：最多重試 3 次，每次失敗延遲 3 秒後再試
-        const preloadFs2WmsLayer = async (maxRetries = 3, delayMs = 3000) => {
+        // 帶重試的預先載入：最多重試 20 次，每次失敗延遲 3 秒後再試
+        const preloadFs2WmsLayer = async (maxRetries = 20, delayMs = 3000) => {
           for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-              const layerInfo = await getFs2WmsLayer();
-              console.log("2015年全臺福衛二號影像 (WMS) 預先載入成功", layerInfo);
+              const layerInfo = await getFs2WmsLayer();              
               fs2WmsLayer = new WMSLayer({
                 url: layerInfo.url,
                 sublayers: [{ name: layerInfo.layerName, visible: true }],
@@ -378,6 +377,8 @@
               // 先明確等待 GetCapabilities 載入完成，確保 load 失敗時能被 catch 捕捉並重試
               await fs2WmsLayer.load();
               map.add(fs2WmsLayer);
+
+              console.log("2015年全臺福衛二號影像 (WMS) 預先載入成功", layerInfo);
               return; // 成功即結束
             } catch (err) {
               // 確保損壞的 layer 物件不會殘留，讓下次重試重新建立
@@ -427,12 +428,11 @@
 
         let fs2WmtsLayer: any = null;
 
-        // 帶重試的預先載入：最多重試 3 次，每次失敗延遲 3 秒後再試
-        const preloadFs2WmtsLayer = async (maxRetries = 3, delayMs = 3000) => {
+        // 帶重試的預先載入：最多重試 20 次，每次失敗延遲 3 秒後再試
+        const preloadFs2WmtsLayer = async (maxRetries = 20, delayMs = 3000) => {
           for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-               const layerInfo = await getFs2WmtsLayer();
-               console.log("2015年全臺福衛二號影像 (WMTS) 預先載入成功", layerInfo);
+               const layerInfo = await getFs2WmtsLayer();               
               fs2WmtsLayer = new WMTSLayer({
                 url: layerInfo.url,
                 activeLayer: {
@@ -444,7 +444,7 @@
               // 先明確等待 GetCapabilities 載入完成，確保 load 失敗時能被 catch 捕捉並重試
               await fs2WmtsLayer.load();
 
-              // 不立即加入 map；切換至 2D 時才加入，避免 SceneView tiling-scheme-unsupported
+              console.log("2015年全臺福衛二號影像 (WMTS) 預先載入成功", layerInfo);
               return; // 成功即結束
             } catch (err) {
               // 確保損壞的 layer 物件不會殘留，讓下次重試重新建立

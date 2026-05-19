@@ -71,6 +71,19 @@
         }
 
         /// <summary>
+        /// 福衛影像(WMS) 服務的 圖層名稱
+        /// </summary>
+        private string fs2WmsLayerName = string.Empty;
+        /// <summary>
+        /// 福衛影像(WMS) 服務的 圖層名稱
+        /// </summary>
+        public string Fs2WmsLayerName
+        {
+            get => fs2WmsLayerName;
+            set => fs2WmsLayerName = value;
+        }
+
+        /// <summary>
         /// 福衛影像(WMTS) 服務的 URL
         /// </summary>
         private string fs2WmtsUrl = string.Empty;
@@ -81,6 +94,19 @@
         {
             get => fs2WmtsUrl;
             set => fs2WmtsUrl = value;
+        }
+
+        /// <summary>
+        /// 福衛影像(WMTS) 服務的 圖層名稱
+        /// </summary>
+        private string fs2WmtsLayerName = string.Empty;
+        /// <summary>
+        /// 福衛影像(WMTS) 服務的 圖層名稱
+        /// </summary>
+        public string Fs2WmtsLayerName
+        {
+            get => fs2WmtsLayerName;
+            set => fs2WmtsLayerName = value;
         }
 
     }//class end

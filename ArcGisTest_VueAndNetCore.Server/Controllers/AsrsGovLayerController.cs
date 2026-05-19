@@ -36,7 +36,7 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
             {
                 name = "2015年全臺福衛二號影像", // 圖層名稱
                 url = "/api-fs2" + _asrsGovApi.Fs2WmsUrl, // 代理 URL
-                layerName = "FS2:fs2015-1_masked_2m_enhance", // WMS 圖層名稱
+                layerName = _asrsGovApi.Fs2WmsLayerName, // WMS 圖層名稱
                 format = "image/gif", // 圖像格式
                 transparent = false,  // 是否透明
                 version = "1.1.0"     // WMS 版本
@@ -58,10 +58,10 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
             {
                 name = "2015年全臺福衛二號影像", // 圖層名稱
                 url = "/api-fs2" + _asrsGovApi.Fs2WmtsUrl, // 代理 URL
-                layerName = "FS2:fs2015-1_masked_2m_enhance", // WMS 圖層名稱
+                layerName = _asrsGovApi.Fs2WmtsLayerName, // WMTS 圖層名稱
                 format = "image/gif", // 圖像格式
                 transparent = false,  // 是否透明
-                version = "1.1.0"     // WMS 版本
+                version = "1.1.0"     // WMTS 版本
             };
 
             return Ok(layerInfo);
