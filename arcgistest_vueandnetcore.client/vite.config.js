@@ -63,6 +63,10 @@ export default defineConfig(({ mode }) => ({
       '^/api-fs2': {
         target,
         secure: false
+      },
+      '^/api-ltgis': {
+        target,
+        secure: false
       }
     },
     port: parseInt(env.DEV_SERVER_PORT || '56440'),

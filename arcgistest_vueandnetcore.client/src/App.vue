@@ -222,7 +222,7 @@
     cursor: not-allowed;
   }
   /*============================================================*/
-  </style>
+</style>
 
 <!--初始化-->
 <script setup lang="ts">
@@ -238,10 +238,13 @@
       "esri/Basemap",
       "esri/layers/WMSLayer",
       "esri/layers/WMTSLayer",
+      "esri/layers/ImageryLayer",      // 影像圖層模組
+      "esri/layers/ElevationLayer",    // 高程圖層模組
       "esri/identity/IdentityManager",
       "esri/Graphic"],
       // @ts-ignore
-      (Map, SceneView, MapView, BasemapGallery, Basemap, WMSLayer, WMTSLayer, esriId, Graphic) => {
+      (Map, SceneView, MapView, BasemapGallery, Basemap, WMSLayer, WMTSLayer,
+        ImageryLayer, ElevationLayer, esriId, Graphic) => {
 
         //#region -- 自動還原 ArcGIS 登入憑證 (避免每次重新登入)
         const CREDENTIALS_KEY = "esriCredentials";
@@ -281,6 +284,29 @@
           ) {
             console.warn("[IdentityManager] 已攔截非同步錯誤，不中斷系統：", reason);
             event.preventDefault(); // 阻止瀏覽器顯示 Uncaught error
+          }
+        });
+        //#endregion
+
+        //#region -- 高程圖層初始化
+        const housePriceElevationLayer = new ElevationLayer({
+          url: "/api-ltgis/server/rest/services/test/Natural_Getresidential20260518_tif/ImageServer"
+        });
+
+        const housePriceImageryLayer = new ImageryLayer({
+          url: "/api-ltgis/server/rest/services/test/Natural_Getresidential20260518_tif/ImageServer",
+          opacity: 0.7,
+          visible: false,
+          renderer: {
+            type: "raster-stretch",
+            stretchType: "min-max",
+            colorRamp: {
+              type: "multipart",
+              colorRamps: [
+                { fromColor: [0, 0, 255, 255], toColor: [0, 255, 0, 255] },  // 低房價：藍 → 綠
+                { fromColor: [0, 255, 0, 255], toColor: [255, 0, 0, 255] }   // 高房價：綠 → 紅
+              ]
+            }
           }
         });
         //#endregion
@@ -368,7 +394,7 @@
         const preloadFs2WmsLayer = async (maxRetries = 20, delayMs = 3000) => {
           for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-              const layerInfo = await getFs2WmsLayer();              
+              const layerInfo = await getFs2WmsLayer();
               fs2WmsLayer = new WMSLayer({
                 url: layerInfo.url,
                 sublayers: [{ name: layerInfo.layerName, visible: true }],
@@ -383,7 +409,7 @@
             } catch (err) {
               // 確保損壞的 layer 物件不會殘留，讓下次重試重新建立
               if (fs2WmsLayer) {
-                try { map.remove(fs2WmsLayer); } catch (_) {}
+                try { map.remove(fs2WmsLayer); } catch (_) { }
                 fs2WmsLayer = null;
               }
               console.warn(`WMS 圖層預先載入失敗（第 ${attempt}/${maxRetries} 次）：`, err);
@@ -432,7 +458,7 @@
         const preloadFs2WmtsLayer = async (maxRetries = 20, delayMs = 3000) => {
           for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-               const layerInfo = await getFs2WmtsLayer();               
+              const layerInfo = await getFs2WmtsLayer();
               fs2WmtsLayer = new WMTSLayer({
                 url: layerInfo.url,
                 activeLayer: {
@@ -480,7 +506,48 @@
         fs2WmtsLabel.appendChild(fs2WmtsCheckbox);
         fs2WmtsLabel.appendChild(fs2WmtsSpan);
         layerMenu.appendChild(fs2WmtsLabel);
-        //#endregion      
+        //#endregion
+
+        //#region ◆時價登錄房價 (ImageryLayer + ElevationLayer)
+        const housePriceLabel = document.createElement("label");
+        housePriceLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
+
+        const housePriceCheckbox = document.createElement("input");
+        housePriceCheckbox.type = "checkbox";
+        housePriceCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
+
+        housePriceCheckbox.addEventListener("click", () => {
+          const visible = housePriceCheckbox.checked;
+
+          housePriceImageryLayer.visible = visible;
+
+          // 同步切換高程效果（可選：不切換則保持地形為房價形狀）
+          housePriceElevationLayer.visible = visible;
+
+          if (visible) {
+            if (!map.layers.includes(housePriceImageryLayer)) {
+              map.add(housePriceImageryLayer);
+            }
+            if (!map.ground.layers.includes(housePriceElevationLayer)) {
+              map.ground.layers.add(housePriceElevationLayer);
+            }
+          } else {
+            if (map.layers.includes(housePriceImageryLayer)) {
+              map.remove(housePriceImageryLayer);
+            }
+            if (map.ground.layers.includes(housePriceElevationLayer)) {
+              map.ground.layers.remove(housePriceElevationLayer);
+            }
+          }
+        });
+
+        const housePriceSpan = document.createElement("span");
+        housePriceSpan.textContent = "🏠 時價登錄房價 (3D視覺化)";
+
+        housePriceLabel.appendChild(housePriceCheckbox);
+        housePriceLabel.appendChild(housePriceSpan);
+        layerMenu.appendChild(housePriceLabel);
+        //#endregion
 
         // 將選單添加到右上角
         view.ui.add(layerMenu, "top-right");
