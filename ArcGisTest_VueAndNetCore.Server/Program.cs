@@ -95,7 +95,7 @@ builder.Services.Configure<ArcGisTest_VueAndNetCore.Server.Model.AppSettings.Asr
 var app = builder.Build();
 
 app.UseDefaultFiles();
-app.MapStaticAssets();
+app.UseStaticFiles();   // ← 原本[app.MapStaticAssets();]作廢，改用這個，可正確服務 Vite 動態命名的檔案
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
