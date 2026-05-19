@@ -94,8 +94,12 @@ builder.Services.Configure<ArcGisTest_VueAndNetCore.Server.Model.AppSettings.Asr
 
 var app = builder.Build();
 
+// IIS 子應用程式路徑設定，讓 ASP.NET Core 正確處理子路徑路由
+app.UsePathBase("/ArcGisTest_VueAndNetCore");
+app.UseRouting();
+
 app.UseDefaultFiles();
-app.UseStaticFiles();   // ← 原本[app.MapStaticAssets();]作廢，改用這個，可正確服務 Vite 動態命名的檔案
+app.UseStaticFiles();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
