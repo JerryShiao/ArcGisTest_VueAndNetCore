@@ -1,0 +1,10 @@
+/.vs
+/.vs
+/.vs
+/arcgistest_vueandnetcore.client/obj
+/ArcGisTest_VueAndNetCore.Server/bin
+/ArcGisTest_VueAndNetCore.Server/obj
+
+# 保護含帳密的本機設定檔，避免 Git 簽入
+appsettings.Development.json
+appsettings.Local.json
