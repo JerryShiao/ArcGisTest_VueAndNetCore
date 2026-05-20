@@ -295,7 +295,7 @@
         let housePriceElevationLayer: any = null;
 
         // 先透過 fetch 查詢服務統計，確認範圍後再建立圖層，避免 LayerView 建立失敗
-        const initHousePriceLayers = async () => {
+        const initHousePriceLayers = async (retryCount = 0, maxRetries = 20, retryDelay = 3000) => {
           try {
             // 直接查詢 ImageServer 根端點取得服務資訊（minValues / maxValues）
             const res = await fetch(`${HOUSE_PRICE_IMAGE_SERVER}?f=json`);
@@ -371,9 +371,17 @@
             housePriceCheckbox.disabled = false;
             housePriceCheckbox.title = "";
             console.log("[房價服務] 圖層初始化完成，可勾選顯示。");
-          } catch (err) {
+          }
+          catch (err) {
             console.error("[房價服務] 初始化失敗：", err);
-            housePriceCheckbox.title = "服務載入失敗，請檢查主控台日誌";
+            if (retryCount < maxRetries) {
+              console.warn(`[房價服務] ${retryDelay / 1000} 秒後自動重試 (${retryCount + 1}/${maxRetries})...`);
+              housePriceCheckbox.title = `服務載入失敗，${retryDelay / 1000} 秒後自動重試 (${retryCount + 1}/${maxRetries})`;
+              setTimeout(() => initHousePriceLayers(retryCount + 1, maxRetries, retryDelay), retryDelay);
+            } else {
+              console.error("[房價服務] 已達最大重試次數，停止重試。");
+              housePriceCheckbox.title = "服務載入失敗，請檢查主控台日誌";
+            }
           }
         };
         //#endregion
