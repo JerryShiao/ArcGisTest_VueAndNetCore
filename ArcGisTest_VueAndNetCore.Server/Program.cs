@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Caching.Memory;
 using Yarp.ReverseProxy.Transforms;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -80,6 +81,42 @@ builder.Services.AddReverseProxy()
             resCtx.HttpContext.Response.ContentType = contentType;
             resCtx.HttpContext.Response.ContentLength = bytes.Length;
             await resCtx.HttpContext.Response.Body.WriteAsync(bytes);
+        });
+
+        // 3. 圖磚快取：快取影像回應，下次相同請求直接從記憶體回傳
+        ctx.AddResponseTransform(async resCtx =>
+        {
+            var contentType = resCtx.ProxyResponse?.Content.Headers.ContentType?.ToString() ?? "";
+            if (!contentType.Contains("image/", StringComparison.OrdinalIgnoreCase)) return;
+
+            var cache = resCtx.HttpContext.RequestServices.GetRequiredService<IMemoryCache>();
+            var cacheKey = $"tile:{resCtx.HttpContext.Request.Path}{resCtx.HttpContext.Request.QueryString}";
+
+            // 快取命中：直接回傳，不讀取上游回應
+            if (cache.TryGetValue(cacheKey, out byte[]? cachedBytes) && cachedBytes != null)
+            {
+                resCtx.SuppressResponseBody = true;
+                resCtx.HttpContext.Response.ContentType = contentType;
+                resCtx.HttpContext.Response.ContentLength = cachedBytes.Length;
+                resCtx.HttpContext.Response.Headers["X-Tile-Cache"] = "HIT";
+                await resCtx.HttpContext.Response.Body.WriteAsync(cachedBytes);
+                return;
+            }
+
+            // 快取未命中：讀取上游回應並存入快取
+            resCtx.SuppressResponseBody = true;
+            var imageBytes = await resCtx.ProxyResponse!.Content.ReadAsByteArrayAsync();
+
+            cache.Set(cacheKey, imageBytes, new MemoryCacheEntryOptions
+            {
+                SlidingExpiration = TimeSpan.FromMinutes(30),         // 30 分鐘無存取則過期
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(6) // 最長快取 6 小時
+            });
+
+            resCtx.HttpContext.Response.ContentType = contentType;
+            resCtx.HttpContext.Response.ContentLength = imageBytes.Length;
+            resCtx.HttpContext.Response.Headers["X-Tile-Cache"] = "MISS";
+            await resCtx.HttpContext.Response.Body.WriteAsync(imageBytes);
         });
     });
 
