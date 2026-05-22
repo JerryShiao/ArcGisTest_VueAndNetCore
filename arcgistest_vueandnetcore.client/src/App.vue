@@ -226,8 +226,8 @@
 
 <!--初始化-->
 <script setup lang="ts">
-  import { getFs2WmsLayer, getFs2WmtsLayer } from "@/api/wmsLayer.js";
-
+  import { getFs2WmsLayer, getFs2WmtsLayer } from "@/api/wmsLayer.js";   // 引入 WMS/WMTS 圖層 API
+  import { getWeatherImageryLayer } from "@/api/weatherImageryLayer.js"; // 引入天氣圖 API
   try {
     // 使用 require 載入模組
     // 加上 @ts-ignore 後，TypeScript 會忽略下一行的型別檢查，錯誤「應有 1 個引數，但得到 2 個」就不會再出現了。
@@ -241,10 +241,12 @@
       "esri/layers/ImageryLayer",      // 影像圖層模組
       "esri/layers/ElevationLayer",    // 高程圖層模組
       "esri/identity/IdentityManager",
-      "esri/Graphic"],
+      "esri/Graphic",
+      "esri/layers/ImageryTileLayer"        // 影像切片圖層模組
+    ],
       // @ts-ignore
       (Map, SceneView, MapView, BasemapGallery, Basemap, WMSLayer, WMTSLayer,
-        ImageryLayer, ElevationLayer, esriId, Graphic) => {
+        ImageryLayer, ElevationLayer, esriId, Graphic, ImageryTileLayer) => {
 
         //#region -- 自動還原 ArcGIS 登入憑證 (避免每次重新登入)
         const CREDENTIALS_KEY = "esriCredentials";
@@ -636,6 +638,76 @@
         layerMenu.appendChild(housePriceLabel);
         //#endregion
 
+        //#region ◆氣象內插圖層
+        let weatherImageryLayer = null;
+        // 在地圖建立後加到 map
+        async function createWeatherImageryLayer() {
+          try {
+            weatherImageryLayer = null; // 確保不會有殘留的圖層物件
+            const layerUrl = await getWeatherImageryLayer();
+
+            //測試
+            console.log("氣象內插圖層資訊：", layerUrl);
+
+            weatherImageryLayer = new ImageryTileLayer({
+              url: layerUrl
+            });
+            // 加入地圖
+            map.add(weatherImageryLayer);
+          }
+          catch (err) {
+            console.error("氣象內插圖層載入失敗：", err);
+          }
+        }
+        if (!weatherImageryLayer) {
+          console.warn("氣象內插圖層尚未建立成功，相關功能將無法使用");
+        }
+        else {
+          //顯示URL
+          console.info("氣象內插圖層 URL:", weatherImageryLayer.url);
+          console.info("氣象內插圖層已成功建立，正在加入地圖...");
+          // 監聽圖層載入完成事件
+          weatherImageryLayer.when(() => {
+            console.log("氣象圖層載入完成", weatherImageryLayer);
+          }, (error) => {
+            console.error("氣象圖層載入失敗", error);
+            console.warn("氣象圖層尚未建立成功，無法切換顯示");
+          });
+
+          // 監聽圖層可見性變化
+          weatherImageryLayer.watch("visible", (newValue) => {
+            console.log("氣象圖層可見性變化:", newValue);
+          });
+        }
+
+        // 加入 checkbox 控制顯示
+        const weatherLabel = document.createElement("label");
+        weatherLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
+        const weatherCheckbox = document.createElement("input");
+        weatherCheckbox.type = "checkbox";
+        weatherCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
+        weatherCheckbox.addEventListener("click", () => {
+          if (!weatherImageryLayer) {            
+            weatherCheckbox.checked = false;
+            return;
+          }
+          const visible = weatherCheckbox.checked;
+          if (visible) {
+            map.add(weatherImageryLayer);
+          }
+          else {
+            map.remove(weatherImageryLayer);
+          }
+        });
+        const weatherSpan = document.createElement("span");
+        weatherSpan.textContent = "🌦️ 氣象內插圖層 (僅2D)";
+        weatherLabel.appendChild(weatherCheckbox);
+        weatherLabel.appendChild(weatherSpan);
+
+        // 加入圖層選單
+        layerMenu.appendChild(weatherLabel);
+        //#endregion
+
         // 將選單添加到右上角
         view.ui.add(layerMenu, "top-right");
 
@@ -707,6 +779,8 @@
             currentView = mapView;
             isSceneView = false;
             switchViewBtn.textContent = "🌐 切換至 3D";
+
+            createWeatherImageryLayer(); // 重新建立氣象圖層以確保在 2D 中可用
           } else {
             // ── 切換至 3D ──
             // 1. 停用並取消勾選 WMTS checkbox

@@ -12,6 +12,7 @@
     "lint:eslint": "eslint . --fix --cache"
   },
   "dependencies": {
+    "@arcgis/core": "^5.0.19",
     "vue": "^3.5.32"
   },
   "devDependencies": {

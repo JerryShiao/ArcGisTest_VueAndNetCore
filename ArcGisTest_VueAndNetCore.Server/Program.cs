@@ -1,7 +1,18 @@
+using ArcGisTest_VueAndNetCore.Server.Handler.ExceptionHandlers;
+using ArcGisTest_VueAndNetCore.Server.Service.WeatherImagery;
 using Microsoft.Extensions.Caching.Memory;
 using Yarp.ReverseProxy.Transforms;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// 註冊 全局 Exception Handler 到 DI 容器中
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+
+// 註冊 微軟標準的錯誤詳情服務，有助於標準化 API 錯誤輸出
+builder.Services.AddProblemDetails();
+
+// 註冊 氣象開放資料平台 API 服務
+builder.Services.AddHttpClient<CwaGovApi>();
 
 // Add services to the container.
 builder.Services.AddControllers();
@@ -127,9 +138,22 @@ builder.Services.AddOpenApi();
 // 航遙測圖資 API 配置
 builder.Services.Configure<ArcGisTest_VueAndNetCore.Server.Model.AppSettings.AsrsGovApi>(
     builder.Configuration.GetSection("AsrsGovApi"));
+
+// 氣象圖資配置
+builder.Services.Configure<ArcGisTest_VueAndNetCore.Server.Model.WeatherImagery.WeatherImageryOptions>(
+    builder.Configuration.GetSection("WeatherImagery"));
 #endregion
 
+// 註冊 天氣內插服務
+builder.Services.AddScoped<WeatherInterpolationService>();
+
+// 註冊 天氣圖磚服務
+builder.Services.AddScoped<WeatherTileService>();
+
 var app = builder.Build();
+
+// 啟用內建的錯誤處理中介軟體 (注意：這行一定要放在 Routing, Authorization 等元件之前)
+app.UseExceptionHandler();
 
 // IIS 子應用程式路徑設定，讓 ASP.NET Core 正確處理子路徑路由
 app.UsePathBase("/ArcGisTest_VueAndNetCore");

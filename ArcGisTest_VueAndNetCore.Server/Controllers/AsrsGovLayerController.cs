@@ -16,15 +16,18 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
         /// </summary>
         private readonly AsrsGovApi _asrsGovApi;
 
+        #region ◆建構子 [AsrsGovLayerController]
         /// <summary>
         /// ◆建構子
+        /// </summary>
         /// <param name="asrsGovApiOptions">航遙測圖資 API 配置選項</param>
         public AsrsGovLayerController(IOptions<AsrsGovApi> asrsGovApiOptions)
         {
             _asrsGovApi = asrsGovApiOptions.Value;
         }
+        #endregion
 
-        #region ◆福衛二號影像(WMS)
+        #region ◆福衛二號影像(WMS) [GetFs2WmsLayer]
         /// <summary>
         /// 取得 2015 年全臺福衛二號影像的 WMS 圖層配置。
         /// </summary>
@@ -46,7 +49,7 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
         }
         #endregion
 
-        #region ◆福衛二號影像(WMTS)
+        #region ◆福衛二號影像(WMTS) [GetFs2WmtsLayer]
         /// <summary>
         /// 取得 2015 年全臺福衛二號影像的 WMTS 圖層配置。
         /// </summary>

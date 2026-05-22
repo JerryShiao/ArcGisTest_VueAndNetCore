@@ -67,6 +67,10 @@ export default defineConfig(({ mode }) => ({
       '^/api-ltgis': {
         target,
         secure: false
+      },
+      '^/weather-imagery': {
+        target,
+        secure: false
       }
     },
     port: parseInt(env.DEV_SERVER_PORT || '56440'),
