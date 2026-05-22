@@ -228,34 +228,37 @@
 <script setup lang="ts">
   import { getFs2WmsLayer, getFs2WmtsLayer } from "@/api/wmsLayer.js";   // 引入 WMS/WMTS 圖層 API
   import { getWeatherImageryLayer } from "@/api/weatherImageryLayer.js"; // 引入天氣圖 API
+
+  //#region -- 初始化地圖和圖層
   try {
     // 使用 require 載入模組
     // 加上 @ts-ignore 後，TypeScript 會忽略下一行的型別檢查，錯誤「應有 1 個引數，但得到 2 個」就不會再出現了。
-    require(["esri/Map",
-      "esri/views/SceneView",
-      "esri/views/MapView",
-      "esri/widgets/BasemapGallery",
-      "esri/Basemap",
-      "esri/layers/WMSLayer",
-      "esri/layers/WMTSLayer",
+    require(["esri/Map",               // 地圖模組
+      "esri/identity/IdentityManager", // 身份驗證管理模組
+      "esri/views/SceneView",          // 3D 地圖視圖模組
+      "esri/views/MapView",            // 2D 地圖視圖模組
+      "esri/widgets/BasemapGallery",   // 底圖選擇器模組
+      "esri/Basemap",                  // 底圖模組
+      "esri/layers/WMSLayer",          // WMS 圖層模組
+      "esri/layers/WMTSLayer",         // WMTS 圖層模組
       "esri/layers/ImageryLayer",      // 影像圖層模組
       "esri/layers/ElevationLayer",    // 高程圖層模組
-      "esri/identity/IdentityManager",
-      "esri/Graphic",
-      "esri/layers/ImageryTileLayer"        // 影像切片圖層模組
+      "esri/Graphic",                  // 圖形模組
+      "esri/layers/ImageryTileLayer"   // 影像切片圖層模組
     ],
       // @ts-ignore
-      (Map, SceneView, MapView, BasemapGallery, Basemap, WMSLayer, WMTSLayer,
-        ImageryLayer, ElevationLayer, esriId, Graphic, ImageryTileLayer) => {
+      (Esri_Map, Esri_IdentityManager, Esri_SceneView, Esri_MapView, BasemapGallery, Basemap,
+        WMSLayer, WMTSLayer, ImageryLayer, ElevationLayer, 
+        Graphic, ImageryTileLayer) => {
 
-        //#region -- 自動還原 ArcGIS 登入憑證 (避免每次重新登入)
-        const CREDENTIALS_KEY = "esriCredentials";
+        //#region ◆自動還原 ArcGIS 登入憑證 (避免每次重新登入)
+        const CREDENTIALS_KEY = "esriCredentials"; // 存儲憑證的 localStorage 鍵名
 
         // 從 localStorage 還原上次儲存的登入憑證
         const savedCredentials = localStorage.getItem(CREDENTIALS_KEY);
         if (savedCredentials) {
           try {
-            esriId.initialize(JSON.parse(savedCredentials));
+            Esri_IdentityManager.initialize(JSON.parse(savedCredentials));
           } catch (e) {
             // 若憑證格式有誤或已過期，清除後重新登入
             localStorage.removeItem(CREDENTIALS_KEY);
@@ -263,9 +266,9 @@
         }
 
         // 每當新憑證建立時（登入後），自動儲存到 localStorage
-        esriId.on("credential-create", () => {
+        Esri_IdentityManager.on("credential-create", () => {
           try {
-            localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(esriId.toJSON()));
+            localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(Esri_IdentityManager.toJSON()));
           } catch (e) {
             console.warn("[IdentityManager] 儲存憑證失敗，已略過：", e);
           }
@@ -289,6 +292,210 @@
           }
         });
         //#endregion
+
+        //#region ◆台灣電子地圖 (WMTS)
+        // 創建底圖
+        const taiwanWmtsLayer = new WMTSLayer({
+          url: "https://wmts.nlsc.gov.tw/wmts",
+          activeLayer: {
+            id: "EMAP"  // 電子地圖圖層 ID
+          },
+          serviceMode: "KVP",  // 或 "RESTful"
+          title: "台灣電子地圖 (WMTS)"
+        });
+
+        // 創建 Basemap 並使用 WMTS 圖層
+        const taiwanWmtsBasemap = new Basemap({
+          baseLayers: [taiwanWmtsLayer],
+          title: "台灣電子地圖 (WMTS)",
+          thumbnailUrl: new URL('./assets/taiwan-wmts-thumbnail.svg', import.meta.url).href
+        });
+        //#endregion
+
+        //#region ◆衛星影像底圖 (自定義繁體中文標題)
+        // 先創建標準底圖，然後克隆並修改屬性
+        const imageryBasemap = Basemap.fromId("arcgis-imagery").clone();
+        imageryBasemap.title = "衛星影像";
+        //#endregion
+
+        //#region ◆街道圖底圖 (自定義繁體中文標題)
+        // 先創建標準底圖，然後克隆並修改屬性
+        const streetsBasemap = Basemap.fromId("arcgis-streets").clone();
+        streetsBasemap.title = "街道圖";
+        //#endregion
+
+        //#region ◆創建地圖實例
+        const esri_Map = new Esri_Map({
+          basemap: taiwanWmtsBasemap,
+          ground: "world-elevation" // 3D 地形
+        });
+        //#endregion
+
+        //#region ◆創建 3D 視圖並關聯到 HTML 元素
+        const esri_SceneView = new Esri_SceneView({
+          container: "viewDiv", // 對應 HTML 標籤的 ID
+          map: esri_Map,
+          camera: {
+            position: { x: 120.6736, y: 24.1477, z: 50000 },
+            tilt: 45,  // 傾斜角度 (0-90°，0=俯視，90=平視)
+            heading: 0 // 方向角度 (0-360°，0=正北)
+          },
+          // 垂直誇張：放大地形高低差異的視覺效果
+          // 若起伏還是不明顯，可進一步加大此值（最高 8）
+          environment: {
+            verticalExaggeration: 8
+          }
+        });
+
+        // 2D MapView（共用同一 Esri_Map 實例，初始不掛載 container）
+        const esri_MapView = new Esri_MapView({
+          map: esri_Map,
+          zoom: 8,
+          center: [120.6736, 24.1477]
+        });
+
+        let isSceneView = true;        // 目前是否為 3D 模式
+        let currentView: any = esri_SceneView;   // 目前作用中的 view
+        //#endregion
+
+        //#region --圖層選單
+        const layerMenu = document.createElement("div");
+        layerMenu.className = "custom-menu";
+
+        const menuTitle = document.createElement("h3");
+        menuTitle.textContent = "圖層選單";
+        layerMenu.appendChild(menuTitle);
+
+        //#region ◆2015年全臺福衛二號影像 (WMS)
+        const fs2WmsLabel = document.createElement("label");
+        fs2WmsLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
+
+        const fs2WmsCheckbox = document.createElement("input");
+        fs2WmsCheckbox.type = "checkbox";
+        fs2WmsCheckbox.id = "toggleWmsLayer";
+        fs2WmsCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
+
+        let fs2WmsLayer: any = null;
+
+        // 帶重試的預先載入：最多重試 20 次，每次失敗延遲 3 秒後再試
+        const preloadFs2WmsLayer = async (maxRetries = 20, delayMs = 3000) => {
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+              const layerInfo = await getFs2WmsLayer();
+              fs2WmsLayer = new WMSLayer({
+                url: layerInfo.url,
+                sublayers: [{ name: layerInfo.layerName, visible: true }],
+                visible: false
+              });
+              // 先明確等待 GetCapabilities 載入完成，確保 load 失敗時能被 catch 捕捉並重試
+              await fs2WmsLayer.load();
+              esri_Map.add(fs2WmsLayer);
+
+              console.log("2015年全臺福衛二號影像 (WMS) 預先載入成功", layerInfo);
+              return; // 成功即結束
+            } catch (err) {
+              // 確保損壞的 layer 物件不會殘留，讓下次重試重新建立
+              if (fs2WmsLayer) {
+                try { esri_Map.remove(fs2WmsLayer); } catch (_) { }
+                fs2WmsLayer = null;
+              }
+              console.warn(`WMS 圖層預先載入失敗（第 ${attempt}/${maxRetries} 次）：`, err);
+              if (attempt < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+              } else {
+                console.error("WMS 圖層預先載入已達重試上限，放棄。");
+              }
+            }
+          }
+        };
+        preloadFs2WmsLayer();
+
+        fs2WmsCheckbox.addEventListener("click", () => {
+          const visible = fs2WmsCheckbox.checked;
+
+          if (fs2WmsLayer) {
+            fs2WmsLayer.visible = visible;
+          } else {
+            console.warn("WMS 圖層尚未載入完成，請稍後再試");
+            fs2WmsCheckbox.checked = false;
+          }
+        });
+
+        const fs2WmsSpan = document.createElement("span");
+        fs2WmsSpan.textContent = "🗺️ 2015年全臺福衛二號影像 (WMS)";
+
+        fs2WmsLabel.appendChild(fs2WmsCheckbox);
+        fs2WmsLabel.appendChild(fs2WmsSpan);
+        layerMenu.appendChild(fs2WmsLabel);
+        //#endregion
+
+        //#region ◆2015年全臺福衛二號影像 (WMTS)
+        const fs2WmtsLabel = document.createElement("label");
+        fs2WmtsLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
+
+        const fs2WmtsCheckbox = document.createElement("input");
+        fs2WmtsCheckbox.type = "checkbox";
+        fs2WmtsCheckbox.id = "toggleWmtsLayer";
+        fs2WmtsCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
+        fs2WmtsCheckbox.disabled = true; // 3D 模式不支援，切換至 2D 後才啟用
+
+        let fs2WmtsLayer: any = null;
+
+        // 帶重試的預先載入：最多重試 20 次，每次失敗延遲 3 秒後再試
+        const preloadFs2WmtsLayer = async (maxRetries = 20, delayMs = 3000) => {
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+              const layerInfo = await getFs2WmtsLayer();
+              fs2WmtsLayer = new WMTSLayer({
+                url: layerInfo.url,
+                activeLayer: {
+                  id: layerInfo.layerName,
+                  tileMatrixSetId: "EPSG:900913" // 直接在建構時指定 Web Mercator，與 SceneView 相容
+                },
+                visible: false
+              });
+              // 先明確等待 GetCapabilities 載入完成，確保 load 失敗時能被 catch 捕捉並重試
+              await fs2WmtsLayer.load();
+
+              console.log("2015年全臺福衛二號影像 (WMTS) 預先載入成功", layerInfo);
+              return; // 成功即結束
+            } catch (err) {
+              // 確保損壞的 layer 物件不會殘留，讓下次重試重新建立
+              if (fs2WmtsLayer) {
+                try { esri_Map.remove(fs2WmtsLayer); } catch (_) { }
+                fs2WmtsLayer = null;
+              }
+              console.warn(`WMTS 圖層預先載入失敗（第 ${attempt}/${maxRetries} 次）：`, err);
+              if (attempt < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+              } else {
+                console.error("WMTS 圖層預先載入已達重試上限，放棄。");
+              }
+            }
+          }
+        };
+        preloadFs2WmtsLayer();
+
+        fs2WmtsCheckbox.addEventListener("click", () => {
+          const visible = fs2WmtsCheckbox.checked;
+
+          if (fs2WmtsLayer) {
+            fs2WmtsLayer.visible = visible;
+          } else {
+            console.warn("WMTS 圖層尚未載入完成，請稍後再試");
+            fs2WmtsCheckbox.checked = false;
+          }
+        });
+
+        const fs2WmtsSpan = document.createElement("span");
+        fs2WmtsSpan.textContent = "🗺️ 2015年全臺福衛二號影像 (WMTS，僅2D)";
+
+        fs2WmtsLabel.appendChild(fs2WmtsCheckbox);
+        fs2WmtsLabel.appendChild(fs2WmtsSpan);
+        layerMenu.appendChild(fs2WmtsLabel);
+        //#endregion
+
+        //#region ◆時價登錄房價 (ImageryLayer + ElevationLayer)
 
         //#region -- 房價圖層初始化
         const HOUSE_PRICE_IMAGE_SERVER = "/api-ltgis/server/rest/services/test/Natural_Getresidential20260518_tif/ImageServer";
@@ -388,209 +595,6 @@
         };
         //#endregion
 
-        //#region ◆台灣電子地圖 (WMTS)
-        // 創建底圖
-        const taiwanWmtsLayer = new WMTSLayer({
-          url: "https://wmts.nlsc.gov.tw/wmts",
-          activeLayer: {
-            id: "EMAP"  // 電子地圖圖層 ID
-          },
-          serviceMode: "KVP",  // 或 "RESTful"
-          title: "台灣電子地圖 (WMTS)"
-        });
-
-        // 創建 Basemap 並使用 WMTS 圖層
-        const taiwanWmtsBasemap = new Basemap({
-          baseLayers: [taiwanWmtsLayer],
-          title: "台灣電子地圖 (WMTS)",
-          thumbnailUrl: new URL('./assets/taiwan-wmts-thumbnail.svg', import.meta.url).href
-        });
-        //#endregion
-
-        //#region ◆衛星影像底圖 (自定義繁體中文標題)
-        // 先創建標準底圖，然後克隆並修改屬性
-        const imageryBasemap = Basemap.fromId("arcgis-imagery").clone();
-        imageryBasemap.title = "衛星影像";
-        //#endregion
-
-        //#region ◆街道圖底圖 (自定義繁體中文標題)
-        // 先創建標準底圖，然後克隆並修改屬性
-        const streetsBasemap = Basemap.fromId("arcgis-streets").clone();
-        streetsBasemap.title = "街道圖";
-        //#endregion
-
-        //#region ◆創建地圖實例
-        const map = new Map({
-          basemap: taiwanWmtsBasemap,
-          ground: "world-elevation" // 3D 地形
-        });
-        //#endregion
-
-        //#region ◆創建 3D 視圖並關聯到 HTML 元素
-        const view = new SceneView({
-          container: "viewDiv", // 對應 HTML 標籤的 ID
-          map: map,
-          camera: {
-            position: { x: 120.68, y: 24.15, z: 50000 },
-            tilt: 45,  // 傾斜角度 (0-90°，0=俯視，90=平視)
-            heading: 0 // 方向角度 (0-360°，0=正北)
-          },
-          // 垂直誇張：放大地形高低差異的視覺效果
-          // 若起伏還是不明顯，可進一步加大此值（最高 8）
-          environment: {
-            verticalExaggeration: 8
-          }
-        });
-
-        // 2D MapView（共用同一 Map 實例，初始不掛載 container）
-        const mapView = new MapView({
-          map: map,
-          zoom: 8,
-          center: [120.68, 24.15]
-        });
-
-        let isSceneView = true;        // 目前是否為 3D 模式
-        let currentView: any = view;   // 目前作用中的 view
-        //#endregion
-
-        //#region --圖層選單
-        const layerMenu = document.createElement("div");
-        layerMenu.className = "custom-menu";
-
-        const menuTitle = document.createElement("h3");
-        menuTitle.textContent = "圖層選單";
-        layerMenu.appendChild(menuTitle);
-
-        //#region ◆2015年全臺福衛二號影像 (WMS)
-        const fs2WmsLabel = document.createElement("label");
-        fs2WmsLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
-
-        const fs2WmsCheckbox = document.createElement("input");
-        fs2WmsCheckbox.type = "checkbox";
-        fs2WmsCheckbox.id = "toggleWmsLayer";
-        fs2WmsCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
-
-        let fs2WmsLayer: any = null;
-
-        // 帶重試的預先載入：最多重試 20 次，每次失敗延遲 3 秒後再試
-        const preloadFs2WmsLayer = async (maxRetries = 20, delayMs = 3000) => {
-          for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-              const layerInfo = await getFs2WmsLayer();
-              fs2WmsLayer = new WMSLayer({
-                url: layerInfo.url,
-                sublayers: [{ name: layerInfo.layerName, visible: true }],
-                visible: false
-              });
-              // 先明確等待 GetCapabilities 載入完成，確保 load 失敗時能被 catch 捕捉並重試
-              await fs2WmsLayer.load();
-              map.add(fs2WmsLayer);
-
-              console.log("2015年全臺福衛二號影像 (WMS) 預先載入成功", layerInfo);
-              return; // 成功即結束
-            } catch (err) {
-              // 確保損壞的 layer 物件不會殘留，讓下次重試重新建立
-              if (fs2WmsLayer) {
-                try { map.remove(fs2WmsLayer); } catch (_) { }
-                fs2WmsLayer = null;
-              }
-              console.warn(`WMS 圖層預先載入失敗（第 ${attempt}/${maxRetries} 次）：`, err);
-              if (attempt < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-              } else {
-                console.error("WMS 圖層預先載入已達重試上限，放棄。");
-              }
-            }
-          }
-        };
-        preloadFs2WmsLayer();
-
-        fs2WmsCheckbox.addEventListener("click", () => {
-          const visible = fs2WmsCheckbox.checked;
-
-          if (fs2WmsLayer) {
-            fs2WmsLayer.visible = visible;
-          } else {
-            console.warn("WMS 圖層尚未載入完成，請稍後再試");
-            fs2WmsCheckbox.checked = false;
-          }
-        });
-
-        const fs2WmsSpan = document.createElement("span");
-        fs2WmsSpan.textContent = "🗺️ 2015年全臺福衛二號影像 (WMS)";
-
-        fs2WmsLabel.appendChild(fs2WmsCheckbox);
-        fs2WmsLabel.appendChild(fs2WmsSpan);
-        layerMenu.appendChild(fs2WmsLabel);
-        //#endregion
-
-        //#region ◆2015年全臺福衛二號影像 (WMTS)
-        const fs2WmtsLabel = document.createElement("label");
-        fs2WmtsLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
-
-        const fs2WmtsCheckbox = document.createElement("input");
-        fs2WmtsCheckbox.type = "checkbox";
-        fs2WmtsCheckbox.id = "toggleWmtsLayer";
-        fs2WmtsCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
-        fs2WmtsCheckbox.disabled = true; // 3D 模式不支援，切換至 2D 後才啟用
-
-        let fs2WmtsLayer: any = null;
-
-        // 帶重試的預先載入：最多重試 20 次，每次失敗延遲 3 秒後再試
-        const preloadFs2WmtsLayer = async (maxRetries = 20, delayMs = 3000) => {
-          for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-              const layerInfo = await getFs2WmtsLayer();
-              fs2WmtsLayer = new WMTSLayer({
-                url: layerInfo.url,
-                activeLayer: {
-                  id: layerInfo.layerName,
-                  tileMatrixSetId: "EPSG:900913" // 直接在建構時指定 Web Mercator，與 SceneView 相容
-                },
-                visible: false
-              });
-              // 先明確等待 GetCapabilities 載入完成，確保 load 失敗時能被 catch 捕捉並重試
-              await fs2WmtsLayer.load();
-
-              console.log("2015年全臺福衛二號影像 (WMTS) 預先載入成功", layerInfo);
-              return; // 成功即結束
-            } catch (err) {
-              // 確保損壞的 layer 物件不會殘留，讓下次重試重新建立
-              if (fs2WmtsLayer) {
-                try { map.remove(fs2WmtsLayer); } catch (_) { }
-                fs2WmtsLayer = null;
-              }
-              console.warn(`WMTS 圖層預先載入失敗（第 ${attempt}/${maxRetries} 次）：`, err);
-              if (attempt < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-              } else {
-                console.error("WMTS 圖層預先載入已達重試上限，放棄。");
-              }
-            }
-          }
-        };
-        preloadFs2WmtsLayer();
-
-        fs2WmtsCheckbox.addEventListener("click", () => {
-          const visible = fs2WmtsCheckbox.checked;
-
-          if (fs2WmtsLayer) {
-            fs2WmtsLayer.visible = visible;
-          } else {
-            console.warn("WMTS 圖層尚未載入完成，請稍後再試");
-            fs2WmtsCheckbox.checked = false;
-          }
-        });
-
-        const fs2WmtsSpan = document.createElement("span");
-        fs2WmtsSpan.textContent = "🗺️ 2015年全臺福衛二號影像 (WMTS，僅2D)";
-
-        fs2WmtsLabel.appendChild(fs2WmtsCheckbox);
-        fs2WmtsLabel.appendChild(fs2WmtsSpan);
-        layerMenu.appendChild(fs2WmtsLabel);
-        //#endregion
-
-        //#region ◆時價登錄房價 (ImageryLayer + ElevationLayer)
         const housePriceLabel = document.createElement("label");
         housePriceLabel.style.cssText = "display: flex; align-items: center; cursor: pointer; padding: 5px 0;";
 
@@ -611,21 +615,21 @@
 
           if (visible) {
             // 加入彩色房價影像圖層
-            if (!map.layers.includes(housePriceImageryLayer)) {
-              map.add(housePriceImageryLayer);
+            if (!esri_Map.layers.includes(housePriceImageryLayer)) {
+              esri_Map.add(housePriceImageryLayer);
             }
             housePriceImageryLayer.visible = true;
             // 加入房價高程圖層（地形依房價高低起伏）
-            if (!map.ground.layers.includes(housePriceElevationLayer)) {
-              map.ground.layers.add(housePriceElevationLayer);
+            if (!esri_Map.ground.layers.includes(housePriceElevationLayer)) {
+              esri_Map.ground.layers.add(housePriceElevationLayer);
             }
           } else {
             housePriceImageryLayer.visible = false;
-            if (map.layers.includes(housePriceImageryLayer)) {
-              map.remove(housePriceImageryLayer);
+            if (esri_Map.layers.includes(housePriceImageryLayer)) {
+              esri_Map.remove(housePriceImageryLayer);
             }
-            if (map.ground.layers.includes(housePriceElevationLayer)) {
-              map.ground.layers.remove(housePriceElevationLayer);
+            if (esri_Map.ground.layers.includes(housePriceElevationLayer)) {
+              esri_Map.ground.layers.remove(housePriceElevationLayer);
             }
           }
         });
@@ -653,7 +657,7 @@
               url: layerUrl
             });
             // 加入地圖
-            map.add(weatherImageryLayer);
+            esri_Map.add(weatherImageryLayer);
           }
           catch (err) {
             console.error("氣象內插圖層載入失敗：", err);
@@ -693,10 +697,10 @@
           }
           const visible = weatherCheckbox.checked;
           if (visible) {
-            map.add(weatherImageryLayer);
+            esri_Map.add(weatherImageryLayer);
           }
           else {
-            map.remove(weatherImageryLayer);
+            esri_Map.remove(weatherImageryLayer);
           }
         });
         const weatherSpan = document.createElement("span");
@@ -709,7 +713,7 @@
         //#endregion
 
         // 將選單添加到右上角
-        view.ui.add(layerMenu, "top-right");
+        esri_SceneView.ui.add(layerMenu, "top-right");
 
         // 非同步初始化房價圖層（統計取得後才啟用 checkbox）
         initHousePriceLayers();
@@ -717,7 +721,7 @@
 
         //#region ◆底圖切換功能
         const basemapGallery = new BasemapGallery({
-          view: view,
+          view: esri_SceneView,
           source: [
             taiwanWmtsBasemap, // 台灣電子地圖 (WMTS)
             imageryBasemap,    // 衛星影像
@@ -727,7 +731,7 @@
         //#endregion
 
         //#region ◆創建可展開的底圖選擇器
-        const bgExpand = view.ui.add({
+        const bgExpand = esri_SceneView.ui.add({
           component: basemapGallery,
           position: "bottom-left",
           expanded: false
@@ -736,7 +740,7 @@
 
         //#region ◆MapView 底圖選擇器（2D 模式用）
         const mapBasemapGallery = new BasemapGallery({
-          view: mapView,
+          view: esri_MapView,
           source: [
             taiwanWmtsBasemap,
             imageryBasemap,
@@ -754,8 +758,8 @@
           if (isSceneView) {
             // ── 切換至 2D ──
             // 1. WMTS 加入 map（僅 2D 相容）
-            if (fs2WmtsLayer && !map.layers.includes(fs2WmtsLayer)) {
-              map.add(fs2WmtsLayer);
+            if (fs2WmtsLayer && !esri_Map.layers.includes(fs2WmtsLayer)) {
+              esri_Map.add(fs2WmtsLayer);
             }
             // 2. 若 WMTS checkbox 勾選，確保圖層可見
             if (fs2WmtsLayer) {
@@ -765,18 +769,19 @@
             fs2WmtsCheckbox.disabled = !fs2WmtsLayer;
 
             // 4. 容器交換
-            const center = (view as any).center ?? { longitude: 120.68, latitude: 24.15 };
-            view.container = null as any;
-            mapView.center = center;
-            mapView.container = "viewDiv";
+            const center = (esri_SceneView as any).center ?? { longitude: 120.6736, latitude: 24.1477 };
+            esri_SceneView.container = null as any;
+            esri_MapView.center = center;
+            esri_MapView.zoom = 13; // 拉近視角
+            esri_MapView.container = "viewDiv";
 
             // 5. 將底圖 gallery 與按鈕移至 mapView
-            mapView.ui.add({ component: mapBasemapGallery, position: "bottom-left", expanded: false });
-            mapView.ui.add(customButton, "top-left");
-            mapView.ui.add(switchViewBtn, "top-left");
-            mapView.ui.add(layerMenu, "top-right");
+            esri_MapView.ui.add({ component: mapBasemapGallery, position: "bottom-left", expanded: false });
+            esri_MapView.ui.add(customButton, "top-left");
+            esri_MapView.ui.add(switchViewBtn, "top-left");
+            esri_MapView.ui.add(layerMenu, "top-right");
 
-            currentView = mapView;
+            currentView = esri_MapView;
             isSceneView = false;
             switchViewBtn.textContent = "🌐 切換至 3D";
 
@@ -786,24 +791,25 @@
             // 1. 停用並取消勾選 WMTS checkbox
             fs2WmtsCheckbox.disabled = true;
             fs2WmtsCheckbox.checked = false;
-            // 2. 從 map 移除 WMTS（SceneView 不支援）
+            // 2. 從 esri_Map 移除 WMTS（SceneView 不支援）
             if (fs2WmtsLayer) {
               fs2WmtsLayer.visible = false;
-              try { map.remove(fs2WmtsLayer); } catch (_) { }
+              try { esri_Map.remove(fs2WmtsLayer); } catch (_) { }
             }
 
             // 3. 容器交換
-            const center = (mapView as any).center ?? { longitude: 120.68, latitude: 24.15 };
-            mapView.container = null as any;
-            view.container = "viewDiv";
+            const center = (esri_MapView as any).center ?? { longitude: 120.6736, latitude: 24.1477 };
+            esri_MapView.container = null as any;
+            esri_SceneView.camera.position = { x: center.longitude, y: center.latitude, z: 50000 };
+            esri_SceneView.container = "viewDiv";
 
             // 4. 將底圖 gallery 與按鈕移至 view（SceneView）
-            view.ui.add({ component: basemapGallery, position: "bottom-left", expanded: false });
-            view.ui.add(customButton, "top-left");
-            view.ui.add(switchViewBtn, "top-left");
-            view.ui.add(layerMenu, "top-right");
+            esri_SceneView.ui.add({ component: basemapGallery, position: "bottom-left", expanded: false });
+            esri_SceneView.ui.add(customButton, "top-left");
+            esri_SceneView.ui.add(switchViewBtn, "top-left");
+            esri_SceneView.ui.add(layerMenu, "top-right");
 
-            currentView = view;
+            currentView = esri_SceneView;
             isSceneView = true;
             switchViewBtn.textContent = "🗺️ 切換至 2D";
           }
@@ -1001,12 +1007,15 @@
         });
 
         // 將按鈕添加到地圖的左上角
-        view.ui.add(customButton, "top-left");
-        view.ui.add(switchViewBtn, "top-left");
+        esri_SceneView.ui.add(customButton, "top-left");
+        esri_SceneView.ui.add(switchViewBtn, "top-left");
         //#endregion
       });
   }
   catch (error) {
     console.error("載入 ArcGIS API for JavaScript 時發生錯誤：", error);
   }
+  //#endregion
+
+
 </script>
