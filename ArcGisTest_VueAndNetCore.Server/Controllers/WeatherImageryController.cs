@@ -38,15 +38,16 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
         /// <summary>
         /// ◆服務狀態檢查
         /// </summary>
-        /// <param name="f">回應格式，僅支援 pjson</param>
+        /// <param name="f">回應格式，僅支援 pjson 或 json</param>
         /// <returns>服務資訊的 JSON 結果</returns>
         [HttpGet]
-        
+
         public IActionResult ServiceInfoGet([FromQuery] string f = "pjson")
         {
-            // 檢查回應格式是否為 pjson
-            if (!string.Equals(f, "pjson", StringComparison.OrdinalIgnoreCase))
-                return BadRequest("Only f=pjson is supported.");
+            // 檢查回應格式是否為 pjson 或 json
+            if (!string.Equals(f, "pjson", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(f, "json", StringComparison.OrdinalIgnoreCase))
+                return BadRequest("Only f=pjson or f=json is supported.");
 
             // 取得服務資訊
             var info = new
@@ -60,7 +61,7 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
                 minScale = 0, // 最小比例尺
                 maxScale = 0, // 最大比例尺
                 pixelType = "F32",       // 圖像像素類型
-                bandCount = 1,           // 圖像波段數
+                bandCount = 2,           // 圖像波段數
                 defaultMosaicMethod = "None", // 預設拼接方法
                 defaultResamplingMethod = "Nearest", // 預設重採樣方法
                 maxImageHeight = 4096, // 最大圖像高度
@@ -74,7 +75,15 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
                     ymax = _weatherImageryOptions.Extent.YMax, // 最大 Y 座標
                     spatialReference = new { wkid = 4326 }     // 空間參考系統
                 },
-                tileInfo = new
+                extent = new // 服務顯示範圍
+                {
+                    xmin = _weatherImageryOptions.Extent.XMin,
+                    ymin = _weatherImageryOptions.Extent.YMin,
+                    xmax = _weatherImageryOptions.Extent.XMax,
+                    ymax = _weatherImageryOptions.Extent.YMax,
+                    spatialReference = new { wkid = 4326 }
+                },
+                tileInfo = new // 磚片資訊
                 {
                     rows = 256, // 磚片行數
                     cols = 256, // 磚片列數
@@ -89,15 +98,58 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
                         scale = 295829355.45 / Math.Pow(2, i)        // 層級比例尺
                     }).ToArray()
                 },
-                serviceDataType = "esriImageServiceDataTypeGeneric", // 服務資料類型
                 rasterTypeInfos = Array.Empty<object>(), // 光柵類型資訊
-                fields = Array.Empty<object>(), // 服務欄位資訊
-                bandNames = new[] { "Band_1" } // 圖像波段名稱
+                // 服務欄位資訊
+                fields = new object[]
+                {
+                    new { name = "OBJECTID", type = "esriFieldTypeOID", alias = "OBJECTID" }
+                },
+                drawingInfo = new // 繪製資訊
+                {
+                    renderer = new
+                    {
+                        type = "flow", // 標註為流向渲染器
+                        visualVariables = new[]
+                        {
+                            new {
+                                type = "sizeVariable",
+                                field = "Magnitude", // 由 U/V 自動計算
+                                minSize = 0.5,
+                                maxSize = 10
+                            }
+                        },
+                        flowType = "u_v", // 關鍵：告知波段代表 U 與 V
+                        density = 1,
+                        velocityScale = 1
+                    }
+                },
+                // 修改 rasterFunctionInfos 讓前端知道如何處理
+                rasterFunctionInfos = new[]
+                {
+                    new { name = "None", description = "Make a 2-band export for Wind.", help = "" }
+                },
+                serviceDataType = "esriImageServiceDataTypeVector-UV", // 服務資料類型為 Vector-UV
+                bandNames = new[] { "U", "V" } // 兩個波段名稱
             };
 
             return Ok(info);
         }
         #endregion
+
+        [HttpGet("keyProperties")]
+        public IActionResult KeyProperties([FromQuery] string f = "json")
+        {
+            if (!string.Equals(f, "pjson", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(f, "json", StringComparison.OrdinalIgnoreCase))
+                return BadRequest("Only f=pjson or f=json is supported.");
+
+            // 範例回傳內容，可依實際需求調整
+            var result = new
+            {
+                keyProperties = new string[0]
+            };
+            return new JsonResult(result);
+        }
 
         #region ◆圖像請求 [TileGet]
         /// <summary>
@@ -118,9 +170,10 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
 
         [HttpGet("exportImage")]
         public async Task<IActionResult> ExportImage(
-    [FromQuery] string bbox, // 格式: xmin,ymin,xmax,ymax
-    [FromQuery] string size, // 格式: width,height
-    [FromQuery] string format = "png",
+    [FromQuery] string bbox,
+    [FromQuery] string size,
+    [FromQuery] string format = "tiff", // 建議改用 tiff 或 lerc 以攜帶浮點數
+    [FromQuery] string f = "image",
     CancellationToken ct = default)
         {
             // 解析 bbox 與 size
@@ -130,12 +183,16 @@ namespace ArcGisTest_VueAndNetCore.Server.Controllers
                 return BadRequest("Invalid bbox or size.");
 
             // 產生影像
+
+            // 1. 取得原始 U, V 資料矩陣 (而非繪製好的圖片)
+            // 這裡假設您的 Service 有一個方法可以產出兩層 float 矩陣
             var png = await _weatherTileService.RenderImageAsync(
-                bboxParts[0], bboxParts[1], bboxParts[2], bboxParts[3],
-                sizeParts[0], sizeParts[1], ct);
+               bboxParts[0], bboxParts[1], bboxParts[2], bboxParts[3],
+                sizeParts[0], sizeParts[1], ct);       
 
             return File(png, "image/png");
         }
+
 
         // 2. /identify
         [HttpGet("identify")]

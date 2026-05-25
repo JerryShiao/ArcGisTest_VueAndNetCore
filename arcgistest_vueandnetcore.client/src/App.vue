@@ -244,12 +244,13 @@
       "esri/layers/ImageryLayer",      // 影像圖層模組
       "esri/layers/ElevationLayer",    // 高程圖層模組
       "esri/Graphic",                  // 圖形模組
-      "esri/layers/ImageryTileLayer"   // 影像切片圖層模組
+      "esri/layers/ImageryTileLayer",  // 影像切片圖層模組
+      "esri/renderers/FlowRenderer"    // 流動渲染器模組（氣象圖層用） 
     ],
       // @ts-ignore
       (Esri_Map, Esri_IdentityManager, Esri_SceneView, Esri_MapView, BasemapGallery, Basemap,
         WMSLayer, WMTSLayer, ImageryLayer, ElevationLayer, 
-        Graphic, ImageryTileLayer) => {
+        Graphic, ImageryTileLayer, FlowRenderer) => {
 
         //#region ◆自動還原 ArcGIS 登入憑證 (避免每次重新登入)
         const CREDENTIALS_KEY = "esriCredentials"; // 存儲憑證的 localStorage 鍵名
@@ -653,20 +654,32 @@
             //測試
             console.log("氣象內插圖層資訊：", layerUrl);
 
-            weatherImageryLayer = new ImageryTileLayer({
-              url: layerUrl
+            const flowRenderer = new FlowRenderer({
+              // 需指定 uComponentBandId, vComponentBandId
+              uComponentBandId: 0, // U 分量波段索引
+              vComponentBandId: 1, // V 分量波段索引
+              trailWidth: "2px",
+              trailLength: 50,
+              density: 1,
+              color: "cyan"
             });
-            // 加入地圖
+            weatherImageryLayer = new ImageryLayer({
+              url: layerUrl,
+              renderer: flowRenderer
+            });
             esri_Map.add(weatherImageryLayer);
+
+            // weatherImageryLayer = new ImageryTileLayer({
+            //   url: layerUrl
+            // });
+            // // 加入地圖
+            // esri_Map.add(weatherImageryLayer);
           }
           catch (err) {
             console.error("氣象內插圖層載入失敗：", err);
           }
         }
-        if (!weatherImageryLayer) {
-          console.warn("氣象內插圖層尚未建立成功，相關功能將無法使用");
-        }
-        else {
+        if (weatherImageryLayer) {
           //顯示URL
           console.info("氣象內插圖層 URL:", weatherImageryLayer.url);
           console.info("氣象內插圖層已成功建立，正在加入地圖...");
@@ -691,7 +704,9 @@
         weatherCheckbox.type = "checkbox";
         weatherCheckbox.style.cssText = "margin-right: 8px; cursor: pointer;";
         weatherCheckbox.addEventListener("click", () => {
-          if (!weatherImageryLayer) {            
+          if (!weatherImageryLayer) {
+            //無法切換顯示
+            console.warn("氣象圖層尚未建立成功，無法切換顯示");
             weatherCheckbox.checked = false;
             return;
           }
